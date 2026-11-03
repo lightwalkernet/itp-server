@@ -20,7 +20,9 @@ Repo names are placeholders; rename freely, but keep the boundaries.
 
 ### Package installs
 
-- `itp-core` and the sync package are private GitHub repos. Every consumer installs them as `"type": "vcs"` repositories at tagged versions.
+- `itp-core` and the sync package are private GitHub repos. Every consumer installs them as `"type": "vcs"` repositories.
+- No version tags. Consumers require `dev-main`, and `composer.lock` pins the exact commit, so builds stay reproducible. Update deliberately, one package at a time (`composer update lightwalkernet/itp-core`). Only push `main` when its tests are green.
+- Composer accepts a `dev-main` requirement from the root `composer.json` only, and doesn't read repositories declared by dependencies. So each app (`itp-server`, `itp-app`) requires `lightwalkernet/sync: dev-main` directly, next to `itp-core`, and lists both `vcs` repositories itself.
 - **Never commit a `path` repository.** Composer symlinks path repos into `vendor/`. NativePHP bundles `vendor/` by copying it, so a symlink either ships broken or drags the whole sibling repo (tests, `.ai/`) onto the phone. Before every mobile build, `find vendor -type l` must print nothing.
 - Forge and Bifrost each need a read-only GitHub token for the private repos, set in their own settings. Never commit `auth.json`.
 
@@ -105,6 +107,19 @@ The finished, playable ITP is shared. The machinery that produced it is not.
 
 - **`itp-core`:** users, ITPs (finished attunement text + audio reference), companions (Breath 11, Quantum Whys), activations/plays, user settings, notification preferences, shares, universal ITPs, wildcards, backgrounds.
 - **`itp-server`:** intakes, generations, attunement segments, segment flags, follow-ups, ratings, fixtures/evaluation set, reversal derivations, slot extraction, classifier output, staff, audit log, Sanctum tokens.
+
+**A playable ITP is one row.** The attunement and its companions (Breath 11, Quantum Whys) are columns on the same row, so a pull can never deliver half an ITP. `itps` (user) and `universal_itps` (global) share the same content columns, defined once in `Itp\Core\Schema\ItpContent`. The old parent table with activation, Breath 11 and base child tables is not carried over.
+
+`itp-core` registers four sync types, in pull order:
+
+| Type | Model | Scope | Notes |
+|---|---|---|---|
+| `users` | `User` | user, owner key `id` | Pull-only (section 5) |
+| `itps` | `Itp` | user | Pull-only for now: the phone never edits a finished ITP |
+| `universal_itps` | `UniversalItp` | global, daily | `kind`: universal or base (Introduction, heart coherence) |
+| `wildcards` | `Wildcard` | global, daily | |
+
+Plays, settings, notification preferences, shares and backgrounds are added with their features (section 11, steps 5–7). Luminous is still undecided (section 12).
 
 Generation-in-progress screens never read pipeline tables directly; they go through the API (section 6). This keeps the prompt-adjacent data off devices and gives both builds one code path.
 
@@ -220,7 +235,7 @@ Fresh repos. Beta-tester data is not migrated. Port code deliberately, don't cop
 ## 11. Build order
 
 1. **Finish the transition spike in `itpinterface`.** Built: directional slides, swipe-back, `@persist` audio and Ken Burns, timing tokens, `html.is-native`. Still to do: run the device test matrix in `FINDINGS.md` section 15 (iPhone, Android, desktop Chrome and Safari), pick `--page-duration`, and record go/no-go there. Decide before step 5.
-2. **Sync package, schema half.** The `$table->syncable()` Blueprint macro, the `Syncable` trait (ULIDs, soft deletes, server-side stamping, `updateSynced()`), the `sync_sequence` table and its tests. Tag a release so `itp-core` can require it.
+2. **Sync package, schema half.** The `$table->syncable()` Blueprint macro, the `Syncable` trait (ULIDs, soft deletes, server-side stamping, `updateSynced()`), the `sync_sequence` table and its tests.
 3. **`itp-core` + `itp-server` skeleton.** Shared migrations (using the macro), staff + roles, Studio login, Horizon gate, OTP API, minimum-version check.
 4. **Sync package, transport half.** Push/pull endpoints, client, cursors and the Testbench scenarios in the sync spec.
 5. **`itp-app` skeleton.** Platform flag, layouts, `@persist` regions, AuthClient, first screens.
