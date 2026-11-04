@@ -2,6 +2,7 @@
 
 namespace Database\Seeders;
 
+use App\Models\Staff;
 use Illuminate\Database\Seeder;
 use Itp\Core\Models\User;
 
@@ -17,6 +18,16 @@ class DatabaseSeeder extends Seeder
         User::factory()->create([
             'email' => 'test@example.com',
             'first_name' => 'Test',
+        ]);
+
+        Staff::factory()->owner()->create([
+            'email' => 'owner@example.com',
+            'name' => 'Test Owner',
+        ]);
+
+        Staff::factory()->editor()->create([
+            'email' => 'editor@example.com',
+            'name' => 'Test Editor',
         ]);
     }
 }

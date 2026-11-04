@@ -28,6 +28,7 @@
         <env name="DB_URL" value=""/>
         <env name="ITP_API_DOMAIN" value="api.itstotallypossible.life"/>
         <env name="ITP_MIN_APP_VERSION" value="0.0.0"/>
+        <env name="ITP_STUDIO_DOMAIN" value="studio.itstotallypossible.life"/>
         <env name="MAIL_MAILER" value="array"/>
         <env name="QUEUE_CONNECTION" value="sync"/>
         <env name="SESSION_DRIVER" value="array"/>

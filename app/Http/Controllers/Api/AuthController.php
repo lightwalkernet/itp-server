@@ -2,6 +2,7 @@
 
 namespace App\Http\Controllers\Api;
 
+use App\Enums\CodeAudience;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\Auth\CompleteProfileRequest;
 use App\Http\Requests\Api\Auth\SendCodeRequest;
@@ -29,7 +30,7 @@ class AuthController extends Controller
     {
         $email = $request->validated('email');
 
-        Mail::to($email)->send(new OtpCodeMail(EmailVerificationCode::issue($email)));
+        Mail::to($email)->send(new OtpCodeMail(EmailVerificationCode::issue(CodeAudience::App, $email)));
 
         return ApiResponse::success('We sent a sign-in code to that email.');
     }
@@ -45,7 +46,7 @@ class AuthController extends Controller
         $email = $request->validated('email');
 
         $signIn = DB::transaction(function () use ($request, $email): ?array {
-            if (! EmailVerificationCode::consume($email, $request->validated('code'))) {
+            if (! EmailVerificationCode::consume(CodeAudience::App, $email, $request->validated('code'))) {
                 return null;
             }
 
@@ -60,7 +61,7 @@ class AuthController extends Controller
 
         if ($signIn === null) {
             throw ValidationException::withMessages([
-                'code' => EmailVerificationCode::recordFailedAttempt($email)->message(),
+                'code' => EmailVerificationCode::recordFailedAttempt(CodeAudience::App, $email)->message(),
             ]);
         }
 

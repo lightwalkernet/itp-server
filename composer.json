@@ -8,10 +8,12 @@
     "require": {
         "php": "^8.4",
         "laravel/framework": "^13.17",
+        "laravel/horizon": "^5.50",
         "laravel/sanctum": "^4.3",
         "laravel/tinker": "^3.0",
         "lightwalkernet/itp-core": "dev-main",
-        "lightwalkernet/sync": "dev-main"
+        "lightwalkernet/sync": "dev-main",
+        "livewire/livewire": "^4.4"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
