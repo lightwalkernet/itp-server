@@ -1,0 +1,11 @@
+{
+    "mcpServers": {
+        "laravel-boost": {
+            "command": "/Users/lightwalker/Library/Application Support/Herd/bin/php84",
+            "args": [
+                "/Users/lightwalker/.polyscope/clones/f8eaecfe/golden-goat-ba6c1937/artisan",
+                "boost:mcp"
+            ]
+        }
+    }
+}
