@@ -6,9 +6,12 @@
     "keywords": ["laravel", "framework"],
     "license": "MIT",
     "require": {
-        "php": "^8.3",
+        "php": "^8.4",
         "laravel/framework": "^13.17",
-        "laravel/tinker": "^3.0"
+        "laravel/sanctum": "^4.3",
+        "laravel/tinker": "^3.0",
+        "lightwalkernet/itp-core": "dev-main",
+        "lightwalkernet/sync": "dev-main"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
@@ -85,5 +88,15 @@
         }
     },
     "minimum-stability": "stable",
-    "prefer-stable": true
+    "prefer-stable": true,
+    "repositories": [
+        {
+            "type": "vcs",
+            "url": "https://github.com/lightwalkernet/itp-core.git"
+        },
+        {
+            "type": "vcs",
+            "url": "https://github.com/lightwalkernet/sync.git"
+        }
+    ]
 }
