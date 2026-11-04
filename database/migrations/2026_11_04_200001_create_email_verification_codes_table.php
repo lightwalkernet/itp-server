@@ -5,7 +5,7 @@ use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
 
 /**
- * Sign-in codes for the email OTP flow. Server-only.
+ * Sign-in codes for the email OTP flow, for app users and Studio staff alike. Server-only.
  */
 return new class extends Migration
 {
@@ -16,11 +16,14 @@ return new class extends Migration
     {
         Schema::create('email_verification_codes', function (Blueprint $table) {
             $table->id();
-            $table->string('email')->index();
+            $table->string('audience', 16);
+            $table->string('email');
             $table->char('code', 64);
             $table->unsignedTinyInteger('attempts')->default(0);
             $table->timestamp('expires_at')->index();
             $table->timestamp('created_at')->nullable();
+
+            $table->index(['audience', 'email']);
         });
     }
 

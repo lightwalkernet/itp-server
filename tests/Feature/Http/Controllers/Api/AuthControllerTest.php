@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\CodeAudience;
 use App\Mail\OtpCodeMail;
 use App\Models\EmailVerificationCode;
 use Illuminate\Support\Facades\Mail;
@@ -37,7 +38,7 @@ describe('send-code', function () {
         expect($sent)->toMatch('/\A\d{6}\z/');
         $this->assertDatabaseHas('email_verification_codes', [
             'email' => 'ann@example.com',
-            'code' => EmailVerificationCode::digest('ann@example.com', $sent),
+            'code' => EmailVerificationCode::digest(CodeAudience::App, 'ann@example.com', $sent),
         ]);
         $this->assertDatabaseMissing('email_verification_codes', ['code' => $sent]);
     });
@@ -64,12 +65,12 @@ describe('send-code', function () {
 
     it('keeps an earlier pending code usable when a new one is sent', function () {
         Mail::fake();
-        $earlier = EmailVerificationCode::issue('ann@example.com');
+        $earlier = EmailVerificationCode::issue(CodeAudience::App, 'ann@example.com');
 
         $this->postJson(route('api.auth.send-code'), ['email' => 'ann@example.com'])->assertOk();
 
         expect(EmailVerificationCode::where('email', 'ann@example.com')->count())->toBe(2)
-            ->and(EmailVerificationCode::consume('ann@example.com', $earlier))->toBeTrue();
+            ->and(EmailVerificationCode::consume(CodeAudience::App, 'ann@example.com', $earlier))->toBeTrue();
     });
 
     it('returns 422 when the email is missing or invalid', function (array $payload, string $message) {
@@ -135,7 +136,7 @@ describe('send-code', function () {
 
 describe('verify-code', function () {
     it('creates the account on first sign-in and returns a working token', function () {
-        $code = EmailVerificationCode::issue('ann@example.com');
+        $code = EmailVerificationCode::issue(CodeAudience::App, 'ann@example.com');
 
         $response = $this->postJson(route('api.auth.verify-code'), [
             'email' => 'ann@example.com',
@@ -158,7 +159,7 @@ describe('verify-code', function () {
 
     it('returns needs_profile from the first name on every sign-in', function (?string $firstName, bool $needsProfile) {
         User::factory()->create(['email' => 'ann@example.com', 'first_name' => $firstName]);
-        $code = EmailVerificationCode::issue('ann@example.com');
+        $code = EmailVerificationCode::issue(CodeAudience::App, 'ann@example.com');
 
         $this->postJson(route('api.auth.verify-code'), [
             'email' => 'ann@example.com',
@@ -176,7 +177,7 @@ describe('verify-code', function () {
 
     it('matches the email case-insensitively', function () {
         $user = User::factory()->create(['email' => 'ann@example.com']);
-        $code = EmailVerificationCode::issue('ann@example.com');
+        $code = EmailVerificationCode::issue(CodeAudience::App, 'ann@example.com');
 
         $this->postJson(route('api.auth.verify-code'), [
             'email' => ' ANN@Example.com',
@@ -188,8 +189,8 @@ describe('verify-code', function () {
     });
 
     it('accepts any pending code, not only the newest', function () {
-        $earlier = EmailVerificationCode::issue('ann@example.com');
-        EmailVerificationCode::issue('ann@example.com');
+        $earlier = EmailVerificationCode::issue(CodeAudience::App, 'ann@example.com');
+        EmailVerificationCode::issue(CodeAudience::App, 'ann@example.com');
 
         $this->postJson(route('api.auth.verify-code'), [
             'email' => 'ann@example.com',
@@ -199,7 +200,7 @@ describe('verify-code', function () {
     });
 
     it('returns 422 for a wrong code and creates nothing', function () {
-        $code = EmailVerificationCode::issue('ann@example.com');
+        $code = EmailVerificationCode::issue(CodeAudience::App, 'ann@example.com');
 
         $this->postJson(route('api.auth.verify-code'), [
             'email' => 'ann@example.com',
@@ -217,8 +218,22 @@ describe('verify-code', function () {
             ->and(PersonalAccessToken::count())->toBe(0);
     });
 
+    it('returns 422 for a code issued for Studio', function () {
+        $studioCode = EmailVerificationCode::issue(CodeAudience::Studio, 'ann@example.com');
+
+        $this->postJson(route('api.auth.verify-code'), [
+            'email' => 'ann@example.com',
+            'code' => $studioCode,
+            'device_name' => 'iPhone',
+        ])
+            ->assertUnprocessable()
+            ->assertJsonPath('errors.code', ['That code has expired. Request a new one.']);
+
+        expect(User::count())->toBe(0);
+    });
+
     it('returns 422 for an expired code', function () {
-        $code = EmailVerificationCode::issue('ann@example.com');
+        $code = EmailVerificationCode::issue(CodeAudience::App, 'ann@example.com');
 
         $this->travel(EmailVerificationCode::LIFETIME_MINUTES)->minutes();
 
@@ -234,7 +249,7 @@ describe('verify-code', function () {
     });
 
     it('kills a code after 5 wrong tries', function () {
-        $code = EmailVerificationCode::issue('ann@example.com');
+        $code = EmailVerificationCode::issue(CodeAudience::App, 'ann@example.com');
         $wrong = $code === '000000' ? '111111' : '000000';
         $attempt = fn (string $guess) => $this->postJson(route('api.auth.verify-code'), [
             'email' => 'ann@example.com',
@@ -255,7 +270,7 @@ describe('verify-code', function () {
     });
 
     it('lets a code be used only once', function () {
-        $code = EmailVerificationCode::issue('ann@example.com');
+        $code = EmailVerificationCode::issue(CodeAudience::App, 'ann@example.com');
         $payload = ['email' => 'ann@example.com', 'code' => $code, 'device_name' => 'iPhone'];
 
         $this->postJson(route('api.auth.verify-code'), $payload)->assertOk();
@@ -270,7 +285,7 @@ describe('verify-code', function () {
     it('keeps other tokens, even with the same device name', function () {
         $user = User::factory()->create(['email' => 'ann@example.com']);
         $existing = $user->createToken('iPhone')->accessToken;
-        $code = EmailVerificationCode::issue('ann@example.com');
+        $code = EmailVerificationCode::issue(CodeAudience::App, 'ann@example.com');
 
         $this->postJson(route('api.auth.verify-code'), [
             'email' => 'ann@example.com',
