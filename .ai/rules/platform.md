@@ -21,7 +21,7 @@ Repo names are placeholders; rename freely, but keep the boundaries.
 ### Package installs
 
 - `itp-core` and the sync package are private GitHub repos. Every consumer installs them as `"type": "vcs"` repositories.
-- No version tags. Consumers require `dev-main`, and `composer.lock` pins the exact commit, so builds stay reproducible. Update deliberately, one package at a time (`composer update lightwalkernet/itp-core`). Only push `main` when its tests are green.
+- No version tags. Consumers require `dev-main`, and `composer.lock` pins the exact commit, so builds stay reproducible. Update deliberately: name the ITP packages, never run a bare `composer update` (`composer update lightwalkernet/itp-core lightwalkernet/sync`). Both are root requirements, so naming only `itp-core` leaves sync on its old commit. Only push `main` when its tests are green.
 - Composer accepts a `dev-main` requirement from the root `composer.json` only, and doesn't read repositories declared by dependencies. So each app (`itp-server`, `itp-app`) requires `lightwalkernet/sync: dev-main` directly, next to `itp-core`, and lists both `vcs` repositories itself.
 - **Never commit a `path` repository.** Composer symlinks path repos into `vendor/`. NativePHP bundles `vendor/` by copying it, so a symlink either ships broken or drags the whole sibling repo (tests, `.ai/`) onto the phone. Before every mobile build, `find vendor -type l` must print nothing.
 - Forge and Bifrost each need a read-only GitHub token for the private repos, set in their own settings. Never commit `auth.json`.
