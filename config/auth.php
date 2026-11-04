@@ -1,6 +1,6 @@
 <?php
 
-use App\Models\User;
+use Itp\Core\Models\User;
 
 return [
 
