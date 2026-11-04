@@ -30,7 +30,7 @@ Repo names are placeholders; rename freely, but keep the boundaries.
 
 | Host | Served by | Purpose |
 |---|---|---|
-| `itstotallypossible.life` | `itp-site` | Canonical brand domain. Marketing, privacy policy, delete-account page, beta signup (Mailcoach API). |
+| `itstotallypossible.life` | `itp-site` | Canonical brand domain. Marketing, privacy policy, delete-account page (explains and links to the web build's deletion page, section 5), beta signup (Mailcoach API). |
 | `totallypossible.life` | Forge redirect | 301 to `itstotallypossible.life`, path preserved. |
 | `app.itstotallypossible.life` | `itp-app` (web build) | The web app. Identical screens to the mobile app. |
 | `itp.sh` | `itp-app` (web build, second domain on the same Forge site) | Shares only. `itp.sh/{code}` public, `itp.sh/p/{token}` private (long unguessable token). Serves `/.well-known/apple-app-site-association` and `/.well-known/assetlinks.json` so a tapped share opens the app when installed; otherwise the web player loads with an "open in app / get the app" prompt. |
@@ -138,6 +138,18 @@ Passwordless email OTP (six digits), unchanged in spirit from the current build.
   - **Mobile:** the same API call, then the sync sign-out wipe and removing the token from SecureStorage.
 - The only per-build difference is where the token is stored. Bind that with the platform flag (section 3a).
 - First name is still collected only if empty, checked on every boot.
+- **A 401 on any API call signs the app out.** On mobile that runs the sync sign-out wipe. This is how a phone learns its account was deleted or its token revoked.
+
+### Account deletion
+
+Decided Nov 2026: web-only, and a hard delete.
+
+- **Only on the web build.** The deletion page lives on `app.itstotallypossible.life`, behind a fresh OTP sign-in, which doubles as the identity check. The mobile app has a "Delete account" button and no deletion screen: the button opens that page directly in the browser, never a home or settings page. The `itp-site` delete-account page explains the process and links to the same page.
+- **Store review is a known risk, accepted for simplicity.** Apple 5.1.1(v) wants deletion offered "within the app", and allows a link straight to the web page that completes it. Google Play wants an in-app way to start it, plus a web page that works on its own. If App Review objects, add a one-time link from the app that skips the second sign-in; don't build in-app deletion unless asked.
+- **`itp-server` does the delete, through the API.** It is a hard delete: `forceDelete()`, never `delete()`. `users` has `deleted_at` only because the sync package's `Syncable` trait brings soft deletes with it. A tombstone could never reach a deleted user, because pulling needs a valid token.
+  - Revoke the user's Sanctum tokens explicitly. `personal_access_tokens` points at users without a foreign key.
+  - Delete dependent rows first: user-scoped `itp-core` tables (`itps` has a `user_id` foreign key without cascade) and server-only tables (intakes, generations).
+  - The phone's next API call gets a 401 and signs out, which wipes its local copy. A phone that is offline keeps its copy until it next connects.
 
 ## 6. Generation
 
