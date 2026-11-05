@@ -17,6 +17,7 @@ Route::domain(config('itp.api_domain'))
 
             Route::middleware('auth:sanctum')->group(function () {
                 Route::post('complete-profile', 'completeProfile')->name('complete-profile');
+                Route::sync();
                 Route::post('logout', 'logout')->name('logout');
             });
         });
