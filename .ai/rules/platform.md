@@ -177,16 +177,18 @@ Stack: Laravel 13, Livewire 4.4, NativePHP Mobile 4.4, as proven in the `itpinte
 
 **The whole app runs in NativePHP's root web view.** No native screens, no `<native:webview>` embedded inside native screens. The spike found the embedded web view strips custom request headers (Livewire actions 404 without a workaround), never receives `OnNative` events, and can only intercept navigation one way. Everything works normally in the root web view, so the spike's `RestoreLivewireHeaderOnDevice` workaround is not ported.
 
-Page transitions follow the `itpinterface` transition demo (`resources/js/transitions.js`, `resources/css/transitions.css`). Link-driven slides and the swipe-back are confirmed on real iOS and Android phones; the rest of the device test matrix (`FINDINGS.md` section 15) is still to run.
+Page transitions follow the `itpinterface` transition demo (`resources/js/transitions.js`, `resources/css/transitions.css`). On real iOS and Android phones (device test matrix, `FINDINGS.md` section 15, first run Nov 2026), these pass: link-driven slides, swipe-back, audio across navigation, Android back and slow pages. Rapid input (row 6) is still to check.
 - Links carry `data-transition="forward" | "back" | "tab"` and deliberately **don't** use `wire:navigate`, so Livewire's click handling can't race the transition. The script calls `Livewire.navigate()` itself, inside `document.startViewTransition()`.
 - The direction is a `data-nav-direction` attribute on `<html>`, re-applied after Livewire's swap. The swap overwrites `<html>` attributes, inline `style` included, so anything the script sets on `:root` is re-applied too. The outgoing and incoming pages are named `page-out` / `page-in`, so each keeps its own position.
 - Back uses real `history.back()`, so browser history and the Android back button stay in step. A `popstate` listener keeps the script's own stack correct for back navigations it didn't start.
 - The iOS-style edge swipe is hand-built: the page follows the finger with a static copy of the previous page underneath, then hands off to the view transition from where the finger let go. It runs only under `html.is-native`, so it never races a mobile browser's own back swipe.
-- Timing lives in custom properties on `:root`: `--page-duration` (380ms, provisional: compare 380 and 450ms on both phones), `--page-easing` (`cubic-bezier(.2, .8, .2, 1)`) and `--fade-duration` (150ms). A swipe release takes `--page-duration` × the distance left, floored at 40%, so letting go is always quicker than a tap.
-- Slides are a **push**, not the iOS parallax: the old page moves fully off and isn't dimmed. Pages are see-through to the Ken Burns background, and a parallaxed old page shows through as a grey panel.
-- Slide animations apply only under `html.is-native` (set from the platform flag, section 3a). The web build gets a 150ms crossfade. Without View Transitions support (iOS < 18), pages swap instantly; nothing breaks.
-- `@persist` keeps the Ken Burns background, the bottom nav and the audio player alive across navigation. The tab bar's active state is updated by the script, because a persisted element doesn't re-render.
-- `@persist` cancels running CSS animations on every navigation (Livewire removes and re-inserts the element). Ken Burns restarts its drift from `livewire:navigating`'s `onSwap` with a negative delay. Port the spike's `ken-burns.js`, which also restores the outgoing photo mid-crossfade, not Artemis's original.
+- Timing lives in custom properties on `:root`: `--page-duration` (450ms: 380 and 450ms felt the same on device, so the longer one), `--page-easing` (`cubic-bezier(.2, .8, .2, 1)`) and `--fade-duration` (150ms). A swipe release takes `--page-duration` × the distance left, floored at 40%, so letting go is always quicker than a tap.
+- Slides are a **push**, not the iOS parallax: the old page moves fully off and isn't dimmed. Pages can be see-through to a background, and a parallaxed old page shows through as a grey panel.
+- Slide animations apply only under `html.is-native` (set from the platform flag, section 3a). Without View Transitions support (iOS < 18), pages swap instantly; nothing breaks.
+- **Web build:** the spike's 150ms crossfade didn't work on desktop. Choose a simpler treatment, or none, when building `itp-app`.
+- `@persist` keeps the bottom nav and the audio player alive across navigation. The tab bar's active state is updated by the script, because a persisted element doesn't re-render.
+- `@persist` cancels running CSS animations on every navigation (Livewire removes and re-inserts the element), so keep animated elements out of persisted regions.
+- **Ken Burns is not an app-wide background** (decided Nov 2026: it glitched across page transitions on both phones). If it's used at all, it lives on a single screen, so it never crosses a navigation. If it is ported, take the spike's `ken-burns.js`, which fixes Artemis's mid-crossfade bug, not Artemis's original.
 - `<html>` gets `scrollbar-gutter: stable`, so desktop scrollbars don't resize the fixed background between pages.
 - Platform-only screens are gated by the flag, e.g. notification settings exist only on mobile.
 
@@ -246,7 +248,7 @@ Fresh repos. Beta-tester data is not migrated. Port code deliberately, don't cop
 
 ## 11. Build order
 
-1. **Finish the transition spike in `itpinterface`.** Built: directional slides, swipe-back, `@persist` audio and Ken Burns, timing tokens, `html.is-native`. Still to do: run the device test matrix in `FINDINGS.md` section 15 (iPhone, Android, desktop Chrome and Safari), pick `--page-duration`, and record go/no-go there. Decide before step 5.
+1. **Finish the transition spike in `itpinterface`.** Built: directional slides, swipe-back, `@persist` audio, timing tokens, `html.is-native`. Device matrix first run done (Nov 2026): `--page-duration` is 450ms, and Ken Burns is limited to a single screen (section 8). Still to do: row 6 (rapid input), then record go/no-go in `FINDINGS.md` section 15.
 2. **Sync package, schema half.** The `$table->syncable()` Blueprint macro, the `Syncable` trait (ULIDs, soft deletes, server-side stamping, `updateSynced()`), the `sync_sequence` table and its tests.
 3. **`itp-core` + `itp-server` skeleton.** Shared migrations (using the macro), staff + roles, Studio login, Horizon gate, OTP API, minimum-version check.
 4. **Sync package, transport half.** Push/pull endpoints, client, cursors and the Testbench scenarios in the sync spec.
@@ -258,4 +260,5 @@ Fresh repos. Beta-tester data is not migrated. Port code deliberately, don't cop
 
 - Final repo names.
 - Whether Luminous is still needed. It is per-ITP content, so keeping it means a companion model in `itp-core`.
-- Transition go/no-go and the final `--page-duration`, after the device matrix (section 11, step 1). Also check whether iOS needs the `audio` background mode for playback to continue when the app is backgrounded.
+- Transition go/no-go, after row 6 of the device matrix (section 11, step 1).
+- Whether iOS needs the `audio` background mode. Playback continues with the screen locked, and the lock screen shows a play control. Switching to another app is not checked yet.
