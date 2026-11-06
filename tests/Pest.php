@@ -1,6 +1,8 @@
 <?php
 
+use App\Ai\Contracts\StructuredModel;
 use Illuminate\Foundation\Testing\LazilyRefreshDatabase;
+use Tests\Fakes\FakeStructuredModel;
 use Tests\TestCase;
 
 /*
@@ -44,7 +46,10 @@ expect()->extend('toBeOne', function () {
 |
 */
 
-function something()
+/**
+ * The fake AI gateway bound for this test.
+ */
+function fakeAi(): FakeStructuredModel
 {
-    // ..
+    return app(StructuredModel::class);
 }

@@ -29,5 +29,7 @@ class DatabaseSeeder extends Seeder
             'email' => 'editor@example.com',
             'name' => 'Test Editor',
         ]);
+
+        $this->call(PromptSeeder::class);
     }
 }
