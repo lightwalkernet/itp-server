@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ItpGenerationController;
 use App\Http\Middleware\EnsureMinimumAppVersion;
 use Illuminate\Support\Facades\Route;
 
@@ -19,5 +20,21 @@ Route::domain(config('itp.api_domain'))
                 Route::post('complete-profile', 'completeProfile')->name('complete-profile');
                 Route::post('logout', 'logout')->name('logout');
             });
+        });
+
+        Route::middleware('auth:sanctum')->group(function () {
+            Route::prefix('generations')->name('generations.')->controller(ItpGenerationController::class)->group(function () {
+                Route::get('/', 'index')->name('index');
+                Route::post('/', 'store')->middleware('throttle:generations')->name('store');
+
+                Route::middleware('can:view,generation')->group(function () {
+                    Route::get('{generation}', 'show')->name('show');
+                    Route::post('{generation}/followups', 'storeFollowups')->name('followups.store');
+                    Route::post('{generation}/segments/{segment}/flags', 'storeFlag')->scopeBindings()->name('segments.flags.store');
+                    Route::post('{generation}/accept', 'accept')->name('accept');
+                });
+            });
+
+            Route::sync();
         });
     });

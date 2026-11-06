@@ -100,6 +100,7 @@ return [
 
     'waits' => [
         'redis:default' => 60,
+        'redis-generation:generation' => 120,
     ],
 
     /*
@@ -212,6 +213,22 @@ return [
             'timeout' => 60,
             'nice' => 0,
         ],
+
+        // The AI pipeline. Its jobs run for minutes and set their own tries, backoff and
+        // timeout (600s), on the `redis-generation` connection, whose retry_after (660s) stays
+        // above that.
+        'supervisor-generation' => [
+            'connection' => 'redis-generation',
+            'queue' => ['generation'],
+            'balance' => 'simple',
+            'maxProcesses' => 1,
+            'maxTime' => 0,
+            'maxJobs' => 0,
+            'memory' => 256,
+            'tries' => 3,
+            'timeout' => 600,
+            'nice' => 0,
+        ],
     ],
 
     'environments' => [
@@ -221,11 +238,17 @@ return [
                 'balanceMaxShift' => 1,
                 'balanceCooldown' => 3,
             ],
+            'supervisor-generation' => [
+                'maxProcesses' => 5,
+            ],
         ],
 
         'local' => [
             'supervisor-1' => [
                 'maxProcesses' => 3,
+            ],
+            'supervisor-generation' => [
+                'maxProcesses' => 2,
             ],
         ],
     ],

@@ -10,6 +10,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use Symfony\Component\HttpFoundation\Response;
+use Symfony\Component\HttpKernel\Exception\HttpExceptionInterface;
 
 return Application::configure(basePath: dirname(__DIR__))
     ->withRouting(
@@ -43,6 +44,12 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->shouldRenderJsonWhen(
             fn (Request $request) => ApiResponse::handles($request) || $request->expectsJson(),
         );
+
+        // One 404 for a missing record and for someone else's: the API never says which, and
+        // never names a model class.
+        $exceptions->render(fn (HttpExceptionInterface $e, Request $request) => $e->getStatusCode() === 404 && ApiResponse::handles($request)
+            ? ApiResponse::error('Not found.', 404)
+            : null);
 
         $exceptions->respond(fn (Response $response, Throwable $e, Request $request) => $response instanceof JsonResponse && ApiResponse::handles($request)
             ? ApiResponse::wrap($response)

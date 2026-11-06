@@ -73,6 +73,18 @@ return [
             'after_commit' => false,
         ],
 
+        // The AI pipeline's `generation` queue (itp.generation.queue_connection). Its jobs run
+        // for up to 600s, so retry_after stays above that, or a running job would be handed
+        // out twice. Kept apart so `default` jobs still retry after 90s.
+        'redis-generation' => [
+            'driver' => 'redis',
+            'connection' => env('REDIS_QUEUE_CONNECTION', 'default'),
+            'queue' => 'generation',
+            'retry_after' => (int) env('REDIS_GENERATION_QUEUE_RETRY_AFTER', 660),
+            'block_for' => null,
+            'after_commit' => false,
+        ],
+
         'deferred' => [
             'driver' => 'deferred',
         ],

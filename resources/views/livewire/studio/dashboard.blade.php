@@ -1,27 +1,32 @@
-<div>
-    <header class="border-b border-stone-200 bg-white">
-        <div class="mx-auto flex max-w-5xl items-center justify-between px-6 py-4">
-            <span class="text-sm font-semibold uppercase tracking-widest text-stone-500">ITP Studio</span>
+<main class="mx-auto max-w-6xl px-6 py-10">
+    <h1 class="text-2xl font-semibold">Welcome, {{ $staff->name }}</h1>
+    <p class="mt-2 text-stone-600">Inspect what the pipeline wrote, tune the prompts, and watch what each ITP costs.</p>
 
-            <div class="flex items-center gap-4 text-sm">
-                <span class="text-stone-600">{{ $staff->name }} · {{ $staff->role->label() }}</span>
+    <div class="mt-8 grid gap-4 sm:grid-cols-2">
+        @can('managePrompts')
+            <a href="{{ route('studio.prompts.index') }}" class="rounded-lg bg-white px-4 py-3 shadow-sm ring-1 ring-stone-200 hover:ring-stone-400">
+                <span class="font-medium">Prompts</span>
+                <span class="block text-sm text-stone-500">Edit each stage's prompt; every save is a new version.</span>
+            </a>
+        @endcan
 
-                <form method="POST" action="{{ route('studio.logout') }}">
-                    @csrf
-                    <button type="submit" class="text-stone-500 hover:text-stone-900">Sign out</button>
-                </form>
-            </div>
-        </div>
-    </header>
+        <a href="{{ route('studio.generations.index') }}" class="rounded-lg bg-white px-4 py-3 shadow-sm ring-1 ring-stone-200 hover:ring-stone-400">
+            <span class="font-medium">Generations</span>
+            <span class="block text-sm text-stone-500">Every run of the pipeline, with its answers, output and AI calls.</span>
+        </a>
 
-    <main class="mx-auto max-w-5xl px-6 py-10">
-        <h1 class="text-2xl font-semibold">Welcome, {{ $staff->name }}</h1>
-        <p class="mt-2 text-stone-600">Studio sections arrive with the pipeline port.</p>
+        @can('viewCosts')
+            <a href="{{ route('studio.costs') }}" class="rounded-lg bg-white px-4 py-3 shadow-sm ring-1 ring-stone-200 hover:ring-stone-400">
+                <span class="font-medium">Costs</span>
+                <span class="block text-sm text-stone-500">What the AI calls cost, per stage, model, user and ITP.</span>
+            </a>
+        @endcan
 
         @if ($canViewHorizon)
-            <a href="{{ route('horizon.index') }}" class="mt-8 inline-flex rounded-lg bg-white px-4 py-3 font-medium shadow-sm ring-1 ring-stone-200 hover:ring-stone-400">
-                Horizon: queues and failed jobs
+            <a href="{{ route('horizon.index') }}" class="rounded-lg bg-white px-4 py-3 shadow-sm ring-1 ring-stone-200 hover:ring-stone-400">
+                <span class="font-medium">Horizon</span>
+                <span class="block text-sm text-stone-500">Horizon: queues and failed jobs</span>
             </a>
         @endif
-    </main>
-</div>
+    </div>
+</main>

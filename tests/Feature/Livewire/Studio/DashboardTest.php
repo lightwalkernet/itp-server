@@ -29,6 +29,21 @@ it('links to Horizon for the owner only', function (string $role, bool $seesLink
     'editor' => ['editor', false],
 ]);
 
+it('shows the Studio navigation the role can open', function (string $role, array $sees, array $doesNotSee) {
+    $response = $this->actingAs(Staff::factory()->{$role}()->create(), 'studio')->get(route('studio.dashboard'));
+
+    foreach ($sees as $routeName) {
+        $response->assertSee(route($routeName));
+    }
+
+    foreach ($doesNotSee as $routeName) {
+        $response->assertDontSee(route($routeName));
+    }
+})->with([
+    'owner' => ['owner', ['studio.generations.index', 'studio.prompts.index', 'studio.costs', 'horizon.index'], []],
+    'editor' => ['editor', ['studio.generations.index'], ['studio.prompts.index', 'studio.costs', 'horizon.index']],
+]);
+
 it('does not let an app user in', function () {
     $this->actingAs(User::factory()->create(), 'web')
         ->get(route('studio.dashboard'))

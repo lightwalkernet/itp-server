@@ -10,8 +10,7 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 /**
- * Studio home. A placeholder until the Studio sections are built; it shows who is signed in
- * and links to what their role can open.
+ * Studio home: links to the Studio sections the signed-in role can open.
  */
 #[Layout('layouts.studio')]
 #[Title('Studio')]
