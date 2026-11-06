@@ -3,14 +3,36 @@
 
     <h1 class="mt-2 text-2xl font-semibold">{{ $stage->label() }} prompt</h1>
 
-    <dl class="mt-3 grid max-w-4xl gap-1 text-sm sm:grid-cols-[6rem_1fr]">
-        <dt class="text-stone-500">Is given</dt>
-        <dd>{{ $stage->reads() }}</dd>
-        <dt class="text-stone-500">Must return</dt>
-        <dd>{{ $stage->purpose() }}</dd>
-        <dt class="text-stone-500">Model</dt>
-        <dd class="font-mono text-xs leading-5">{{ $stage->model() }} · effort {{ $stage->effort() }} · up to {{ number_format($stage->maxTokens()) }} output tokens</dd>
-    </dl>
+    @if ($stage->isPipelineStep())
+        <dl class="mt-3 grid max-w-4xl gap-1 text-sm sm:grid-cols-[6rem_1fr]">
+            <dt class="text-stone-500">Is given</dt>
+            <dd>{{ $stage->reads() }}</dd>
+            <dt class="text-stone-500">Must return</dt>
+            <dd>{{ $stage->purpose() }}</dd>
+            <dt class="text-stone-500">Model</dt>
+            <dd class="font-mono text-xs leading-5">{{ $stage->model() }} · effort {{ $stage->effort() }} · up to {{ number_format($stage->maxTokens()) }} output tokens</dd>
+        </dl>
+
+        @if ($stage->usesMethodCore())
+            <p class="mt-4 max-w-4xl rounded-lg bg-sky-50 px-4 py-3 text-sm text-sky-900 ring-1 ring-sky-200">
+                The <a href="{{ route('studio.prompts.show', \App\Enums\ItpStage::MethodCore->value) }}" class="font-medium underline">method core</a>
+                @if ($activeMethodCore)
+                    (v{{ $activeMethodCore->version }})
+                @else
+                    <span class="font-medium text-red-700">(no active version: this stage cannot run)</span>
+                @endif
+                is prepended to this prompt as its own cached system block. Edit the shared voice rules there, not here.
+            </p>
+        @endif
+    @else
+        <p class="mt-3 max-w-4xl text-sm text-stone-600">{{ $stage->purpose() }} It is not called on its own, so it has no model of its own.</p>
+        <p class="mt-2 max-w-4xl text-sm">
+            <span class="text-stone-500">Prepended to:</span>
+            @foreach ($methodCoreStages as $usingStage)
+                <a href="{{ route('studio.prompts.show', $usingStage->value) }}" class="font-medium hover:underline">{{ $usingStage->label() }}</a>@unless ($loop->last), @endunless
+            @endforeach
+        </p>
+    @endif
 
     @if (session('status'))
         <p class="mt-6 rounded-lg bg-emerald-50 px-4 py-3 text-sm text-emerald-800 ring-1 ring-emerald-200">{{ session('status') }}</p>
@@ -18,7 +40,13 @@
 
     <form wire:submit="saveVersion" class="mt-8 flex flex-col gap-4">
         <div class="flex flex-col gap-1.5">
-            <label for="body" class="text-sm font-medium">Active prompt (the system prompt for every {{ Str::lower($stage->label()) }} call)</label>
+            <label for="body" class="text-sm font-medium">
+                @if ($stage->isPipelineStep())
+                    Active prompt (the system prompt for every {{ Str::lower($stage->label()) }} call)
+                @else
+                    Active method core (the first system block of every call it is prepended to)
+                @endif
+            </label>
             <textarea
                 wire:model="body"
                 id="body"

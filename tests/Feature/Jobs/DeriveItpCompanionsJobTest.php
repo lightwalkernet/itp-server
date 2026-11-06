@@ -1,10 +1,12 @@
 <?php
 
+use App\Ai\Exceptions\UnusableResponse;
 use App\Enums\ItpCompanionType;
 use App\Enums\ItpStage;
 use App\Enums\ItpStatus;
 use App\Jobs\DeriveItpCompanionsJob;
 use App\Models\ItpGeneration;
+use App\Models\PromptVersion;
 use Database\Seeders\PromptSeeder;
 use Itp\Core\Models\Itp;
 
@@ -40,7 +42,54 @@ it('derives the companions and title, then writes the finished ITP through the m
         ->and($generation->completed_at)->not->toBeNull()
         ->and($generation->companions()->where('type', ItpCompanionType::Breathe11)->sole()->from_attunement_version)->toBe(3);
 
-    expect(fakeAi()->lastInput(ItpStage::QuantumWhys))->toContain("## Settled attunement\n\n{$first->text}\n\n{$second->text}");
+    foreach ([ItpStage::Breathe11, ItpStage::QuantumWhys, ItpStage::Title] as $stage) {
+        expect(fakeAi()->lastInput($stage))
+            ->toStartWith("## Settled attunement\n\n{$first->text}\n\n{$second->text}\n\n## Derived slots\n\n{\n    \"old_spell\": \"I have to earn rest.\"")
+            ->not->toContain('## Corrections');
+    }
+});
+
+it('maps the library\'s id-numbered lines and questions to the stored shapes, in id order', function () {
+    fakeAi()
+        ->respondWith(ItpStage::Breathe11, ['lines' => [['id' => 2, 'text' => ' Second. '], ['id' => 1, 'text' => 'First.'], ['id' => 3, 'text' => '']]])
+        ->respondWith(ItpStage::QuantumWhys, ['questions' => [['id' => 11, 'text' => 'Why is it last?'], ['id' => 1, 'text' => 'Why is it first?']]]);
+
+    runDeriveJob($this->generation);
+
+    expect(Itp::sole())
+        ->breath11_lines->toBe([['order' => 1, 'text' => 'First.'], ['order' => 2, 'text' => 'Second.']])
+        ->quantum_whys->toBe(['Why is it first?', 'Why is it last?']);
+});
+
+it('passes every correction from the flags to Breathe 11, Quantum Whys and the title', function () {
+    $this->generation->update(['corrections' => [
+        ['flag_id' => 1, 'line' => 'You are a storm.', 'explanation' => 'Storms scare me.', 'requested_change' => 'Something calmer.'],
+    ]]);
+
+    runDeriveJob($this->generation);
+
+    foreach ([ItpStage::Breathe11, ItpStage::QuantumWhys, ItpStage::Title] as $stage) {
+        expect(fakeAi()->lastInput($stage))->toContain(
+            "## Corrections\n\n[\n    {\n        \"line\": \"You are a storm.\",\n        \"explanation\": \"Storms scare me.\",\n        \"requested_change\": \"Something calmer.\"\n    }\n]",
+        );
+    }
+});
+
+it('prepends the method core to Breathe 11 and Quantum Whys, but not to the title', function () {
+    $methodCore = PromptVersion::activeFor(ItpStage::MethodCore);
+
+    runDeriveJob($this->generation);
+
+    expect(fakeAi()->lastSystem(ItpStage::Breathe11))->toBe([$methodCore->body, PromptVersion::activeFor(ItpStage::Breathe11)->body])
+        ->and(fakeAi()->lastSystem(ItpStage::QuantumWhys))->toBe([$methodCore->body, PromptVersion::activeFor(ItpStage::QuantumWhys)->body])
+        ->and(fakeAi()->lastSystem(ItpStage::Title))->toBe([PromptVersion::activeFor(ItpStage::Title)->body]);
+});
+
+it('fails outright on a title response in the wrong shape', function () {
+    fakeAi()->respondWith(ItpStage::Title, ['title' => 'Built for altitude']);
+
+    expect(fn () => runDeriveJob($this->generation))->toThrow(UnusableResponse::class, '$.description is missing');
+    expect(Itp::count())->toBe(0);
 });
 
 it('only pays for what is still missing when retried', function () {

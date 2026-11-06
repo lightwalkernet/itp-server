@@ -80,6 +80,8 @@ class GenerateItpJob implements ShouldQueue
             $generation->update([
                 'safety_route' => $verdict['route'],
                 'safety_categories' => $verdict['categories'],
+                'safety_confidence' => $verdict['confidence'],
+                'safety_reason' => $verdict['reason'],
             ]);
         }
 
@@ -95,8 +97,9 @@ class GenerateItpJob implements ShouldQueue
     }
 
     /**
-     * Re-run the extraction over the intake and every answer so far. While it finds gaps and
-     * rounds are left, ask the next round and wait for the user. Otherwise move on to generating.
+     * Re-run the extraction over the intake and every answer so far, and store it. While it is
+     * not sufficient and rounds are left, ask the next round and wait for the user. Otherwise
+     * move on to generating.
      */
     protected function asksFollowups(ItpGeneration $generation, SlotExtractionStage $extraction, FollowUpGenerationStage $followups): bool
     {
@@ -106,7 +109,7 @@ class GenerateItpJob implements ShouldQueue
 
         $roundsLeft = $generation->followup_rounds < (int) config('itp.generation.max_followup_rounds');
 
-        $questions = ! $result['sufficient'] && $roundsLeft ? $followups->run($generation, $result['gaps']) : [];
+        $questions = ! $result['sufficient'] && $roundsLeft ? $followups->run($generation) : [];
 
         DB::transaction(function () use ($generation, $questions): void {
             if ($questions === []) {
@@ -118,7 +121,7 @@ class GenerateItpJob implements ShouldQueue
             $round = $generation->followup_rounds + 1;
 
             foreach ($questions as $question) {
-                $generation->followups()->create(['round' => $round, 'question_text' => $question]);
+                $generation->followups()->create(['round' => $round, ...$question]);
             }
 
             $generation->update(['followup_rounds' => $round, 'status' => ItpStatus::AwaitingFollowup]);

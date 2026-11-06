@@ -4,16 +4,16 @@ namespace App\Ai;
 
 use Anthropic\Client;
 use App\Ai\Contracts\StructuredModel;
-use App\Ai\Exceptions\MissingPromptVersion;
 use App\Ai\Exceptions\UnusableResponse;
 use App\Enums\ItpStage;
 use App\Models\ItpGeneration;
-use App\Models\PromptVersion;
+use App\Services\Itp\JsonSchema;
 
 /**
- * The gateway on the official Anthropic SDK. The stage's active prompt is the system prompt,
- * cached; the response is constrained to the stage's JSON schema; thinking is adaptive, with
- * its depth set by the stage's effort.
+ * The gateway on the official Anthropic SDK. The system prompt is the stage's active prompt,
+ * after the active method core for the stages that write in the ITP voice, each block cached
+ * (`StagePrompt`). The response is constrained to the stage's JSON schema and checked against
+ * it again here; thinking is adaptive, with its depth set by the stage's effort.
  *
  * Every answered call is logged, refusals and truncations included, because they are billed.
  */
@@ -26,7 +26,7 @@ class AnthropicStructuredModel implements StructuredModel
 
     public function generate(ItpStage $stage, string $userContent, array $schema, ?ItpGeneration $generation = null): array
     {
-        $promptVersion = PromptVersion::activeFor($stage) ?? throw MissingPromptVersion::forStage($stage);
+        $prompt = StagePrompt::for($stage);
         $model = $stage->model();
         $startedAt = hrtime(true);
 
@@ -40,9 +40,7 @@ class AnthropicStructuredModel implements StructuredModel
                 'effort' => $stage->effort(),
                 'format' => ['type' => 'json_schema', 'schema' => $schema],
             ],
-            system: [
-                ['type' => 'text', 'text' => $promptVersion->body, 'cacheControl' => ['type' => 'ephemeral']],
-            ],
+            system: $prompt->systemBlocks(),
             thinking: ['type' => 'adaptive'],
         );
 
@@ -56,7 +54,7 @@ class AnthropicStructuredModel implements StructuredModel
                 cacheRead: $message->usage->cacheReadInputTokens ?? 0,
             ),
             (int) round((hrtime(true) - $startedAt) / 1_000_000),
-            $promptVersion,
+            $prompt,
             $generation,
         );
 
@@ -68,14 +66,19 @@ class AnthropicStructuredModel implements StructuredModel
             throw UnusableResponse::truncated($stage);
         }
 
-        foreach ($message->content as $block) {
-            if ($block->type === 'text') {
-                $data = json_decode($block->text, true);
+        $text = collect($message->content)
+            ->filter(fn (object $block) => $block->type === 'text')
+            ->map(fn (object $block) => $block->text)
+            ->implode('');
 
-                return is_array($data) ? $data : throw UnusableResponse::invalidJson($stage);
-            }
+        $data = JsonResponse::decode($text) ?? throw UnusableResponse::invalidJson($stage, $text);
+
+        $violation = JsonSchema::violation($schema, $data);
+
+        if ($violation !== null) {
+            throw UnusableResponse::invalid($stage, $violation, $text);
         }
 
-        throw UnusableResponse::invalidJson($stage);
+        return $data;
     }
 }

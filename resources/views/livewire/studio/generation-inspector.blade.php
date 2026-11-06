@@ -29,6 +29,12 @@
             @if (filled($generation->safety_categories))
                 ({{ implode(', ', $generation->safety_categories) }})
             @endif
+            @if ($generation->safety_confidence !== null)
+                · confidence {{ number_format($generation->safety_confidence, 2) }}
+            @endif
+            @if (filled($generation->safety_reason))
+                · <span class="text-stone-600">{{ $generation->safety_reason }}</span>
+            @endif
         </p>
     @endif
 
@@ -50,7 +56,12 @@
                 <dl class="mt-2 flex flex-col gap-3 text-sm">
                     @foreach ($followups as $followup)
                         <div wire:key="followup-{{ $followup->id }}">
-                            <dt class="font-medium">Q: {{ $followup->question_text }}</dt>
+                            <dt class="font-medium">
+                                Q: {{ $followup->question_text }}
+                                @if (filled($followup->gap_slot))
+                                    <span class="ml-1 rounded-full bg-stone-100 px-2 py-0.5 font-mono text-xs font-normal text-stone-600">{{ $followup->gap_slot }}</span>
+                                @endif
+                            </dt>
                             <dd class="mt-1 whitespace-pre-wrap text-stone-700">
                                 A:
                                 @if ($followup->answered_at === null)
@@ -80,6 +91,10 @@
             <details class="rounded-lg bg-white p-4 shadow-sm ring-1 ring-stone-200">
                 <summary class="cursor-pointer text-sm font-medium">Derived slots (reversal)</summary>
                 <pre class="mt-3 overflow-auto whitespace-pre-wrap font-mono text-xs">{{ $generation->derived_slots === null ? 'Not run yet.' : json_encode($generation->derived_slots, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }}</pre>
+            </details>
+            <details class="rounded-lg bg-white p-4 shadow-sm ring-1 ring-stone-200">
+                <summary class="cursor-pointer text-sm font-medium">Corrections ({{ count($generation->corrections ?? []) }}, from flags; passed to regeneration, Breathe 11, Quantum Whys and title)</summary>
+                <pre class="mt-3 overflow-auto whitespace-pre-wrap font-mono text-xs">{{ blank($generation->corrections) ? 'None yet.' : json_encode($generation->corrections, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE) }}</pre>
             </details>
         </div>
     </section>
@@ -192,6 +207,16 @@
                                     @endif
                                 @else
                                     —
+                                @endif
+                                @if ($usage->methodCoreVersion)
+                                    <span class="whitespace-nowrap text-stone-500">
+                                        + core
+                                        @if ($canOpenPrompts)
+                                            <a href="{{ route('studio.prompts.show', ['stage' => $usage->methodCoreVersion->stage->value, 'version' => $usage->methodCoreVersion->id]) }}" class="hover:underline">v{{ $usage->methodCoreVersion->version }}</a>
+                                        @else
+                                            v{{ $usage->methodCoreVersion->version }}
+                                        @endif
+                                    </span>
                                 @endif
                             </td>
                         </tr>

@@ -10,13 +10,26 @@ use App\Services\Itp\JsonSchema;
 use App\Services\Itp\StageInput;
 
 /**
- * Names the finished ITP: a short title and a one-sentence description.
+ * Library stage 8. Names the finished ITP from the settled attunement and derived slots.
+ *
+ * Returns `{title, description}`.
  */
 class TitleStage
 {
     public const int MAX_TITLE_LENGTH = 255;
 
     public function __construct(protected StructuredModel $model) {}
+
+    /**
+     * @return array<string, mixed>
+     */
+    public static function schema(): array
+    {
+        return JsonSchema::object([
+            'title' => JsonSchema::string('Two to five words, sentence case'),
+            'description' => JsonSchema::string('One sentence saying what the piece is for'),
+        ]);
+    }
 
     /**
      * @return array{title: string, description: string}
@@ -26,25 +39,23 @@ class TitleStage
         $result = $this->model->generate(
             ItpStage::Title,
             StageInput::sections([
-                'Addressing' => StageInput::addressing($generation->intake),
                 'Settled attunement' => $generation->attunement->text(),
+                'Derived slots' => StageInput::derivedSlots($generation->derived_slots),
+                'Corrections' => StageInput::corrections($generation),
             ]),
-            JsonSchema::object([
-                'title' => JsonSchema::string('A short title'),
-                'description' => JsonSchema::string('One sentence describing the ITP'),
-            ]),
+            static::schema(),
             $generation,
         );
 
-        $title = mb_substr(trim((string) ($result['title'] ?? '')), 0, self::MAX_TITLE_LENGTH);
+        $title = mb_substr(trim($result['title']), 0, self::MAX_TITLE_LENGTH);
 
         if ($title === '') {
-            throw UnusableResponse::missing(ItpStage::Title, 'title');
+            throw UnusableResponse::missing(ItpStage::Title, 'title', $result);
         }
 
         return [
             'title' => $title,
-            'description' => trim((string) ($result['description'] ?? '')),
+            'description' => trim($result['description']),
         ];
     }
 }

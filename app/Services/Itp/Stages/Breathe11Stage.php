@@ -3,18 +3,31 @@
 namespace App\Services\Itp\Stages;
 
 use App\Ai\Contracts\StructuredModel;
-use App\Ai\Exceptions\UnusableResponse;
 use App\Enums\ItpStage;
 use App\Models\ItpGeneration;
+use App\Services\Itp\IdentifiedTexts;
 use App\Services\Itp\JsonSchema;
 use App\Services\Itp\StageInput;
 
 /**
- * Derives the Breathe 11 companion from the settled attunement.
+ * Library stage 6. Condenses the settled attunement (after the method core) into the Breathe 11.
+ *
+ * Returns `{lines: [{id, text}]}`, stored as the companion's `[{order, text}]`, sorted by id and
+ * numbered from 1 (the shape of itp-core's `breath11_lines`).
  */
 class Breathe11Stage
 {
     public function __construct(protected StructuredModel $model) {}
+
+    /**
+     * @return array<string, mixed>
+     */
+    public static function schema(): array
+    {
+        return JsonSchema::object([
+            'lines' => IdentifiedTexts::schema('Position, from 1', 'One first-person line, said on one breath', 'The eleven lines, in order'),
+        ]);
+    }
 
     /**
      * @return list<array{order: int, text: string}>
@@ -24,25 +37,18 @@ class Breathe11Stage
         $result = $this->model->generate(
             ItpStage::Breathe11,
             StageInput::sections([
-                'Addressing' => StageInput::addressing($generation->intake),
                 'Settled attunement' => $generation->attunement->text(),
+                'Derived slots' => StageInput::derivedSlots($generation->derived_slots),
+                'Avoid' => $generation->intake->avoid,
+                'Corrections' => StageInput::corrections($generation),
             ]),
-            JsonSchema::object([
-                'lines' => JsonSchema::list(
-                    JsonSchema::object(['text' => JsonSchema::string('One Breathe 11 line')]),
-                    'The Breathe 11 lines, in order',
-                ),
-            ]),
+            static::schema(),
             $generation,
         );
 
-        $lines = collect((array) ($result['lines'] ?? []))
-            ->map(fn (mixed $line) => is_array($line) ? trim((string) ($line['text'] ?? '')) : '')
-            ->filter(fn (string $text) => $text !== '')
+        return collect(IdentifiedTexts::byId(ItpStage::Breathe11, $result['lines'], 'lines', $result))
             ->values()
             ->map(fn (string $text, int $index) => ['order' => $index + 1, 'text' => $text])
             ->all();
-
-        return $lines !== [] ? $lines : throw UnusableResponse::missing(ItpStage::Breathe11, 'lines');
     }
 }

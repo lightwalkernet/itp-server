@@ -7,8 +7,9 @@ use App\Models\PromptVersion;
 use Illuminate\Database\Seeder;
 
 /**
- * Gives every stage an active v1 placeholder prompt, so the pipeline runs before the real
- * prompts are written in Studio. A stage that already has any version is left alone.
+ * Gives every stage, and the method core, an active v1 placeholder prompt, so the pipeline runs
+ * on a fresh database. A stage that already has any version is left alone. The real prompts come
+ * from `php artisan itp:import-prompts` (the committed prompt library) or Studio.
  */
 class PromptSeeder extends Seeder
 {

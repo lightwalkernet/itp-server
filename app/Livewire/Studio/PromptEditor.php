@@ -20,7 +20,11 @@ use Livewire\Component;
  * it active, and rolling back makes an older version active again. Owner-only (`managePrompts`).
  *
  * Each version shows how many generations ran with it and the average cost of its calls
- * (`ai_usages.prompt_version_id`), so a prompt change can be judged on cost as well as output.
+ * (`ai_usages.prompt_version_id`, or `method_core_version_id` for the method core), so a prompt
+ * change can be judged on cost as well as output.
+ *
+ * The method core has the same editor. Its page lists the stages it is prepended to; each of
+ * those stages' pages links back to it.
  */
 #[Layout('layouts.studio')]
 class PromptEditor extends Component
@@ -115,6 +119,8 @@ class PromptEditor extends Component
         return view('livewire.studio.prompt-editor', [
             'versions' => $this->versions(),
             'viewing' => $this->viewingId === null ? null : PromptVersion::query()->where('stage', $this->stage)->find($this->viewingId),
+            'activeMethodCore' => $this->stage->usesMethodCore() ? PromptVersion::activeFor(ItpStage::MethodCore) : null,
+            'methodCoreStages' => ItpStage::methodCoreStages(),
         ])->title($this->stage->label().' prompt');
     }
 
@@ -125,12 +131,14 @@ class PromptEditor extends Component
      */
     protected function versions(): Collection
     {
+        $calls = $this->stage->isPipelineStep() ? 'aiUsages' : 'methodCoreUsages';
+
         return PromptVersion::query()
             ->where('stage', $this->stage)
             ->with('createdBy')
-            ->withCount(['aiUsages as calls_count'])
-            ->withCount(['aiUsages as generations_count' => fn ($query) => $query->select(DB::raw('count(distinct generation_id)'))])
-            ->withAvg('aiUsages as average_cost', 'cost_usd')
+            ->withCount(["{$calls} as calls_count"])
+            ->withCount(["{$calls} as generations_count" => fn ($query) => $query->select(DB::raw('count(distinct generation_id)'))])
+            ->withAvg("{$calls} as average_cost", 'cost_usd')
             ->orderByDesc('version')
             ->get();
     }

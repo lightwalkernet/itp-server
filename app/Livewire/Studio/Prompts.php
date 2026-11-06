@@ -11,8 +11,8 @@ use Livewire\Attributes\Title;
 use Livewire\Component;
 
 /**
- * Every pipeline stage, what it is given and must return, and its live prompt version.
- * Owner-only (`managePrompts`).
+ * The method core first (with the stages it is prepended to), then every pipeline stage, what
+ * it is given and must return, and its live prompt version. Owner-only (`managePrompts`).
  */
 #[Layout('layouts.studio')]
 #[Title('Prompts')]
