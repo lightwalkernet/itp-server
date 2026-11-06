@@ -102,6 +102,43 @@ it('shows how many generations used each version and the average cost of its cal
         ->calls_count->toBe(3);
 });
 
+it('shows a voice stage that the method core is prepended to, linking to it', function () {
+    $core = PromptVersion::factory()->forStage(ItpStage::MethodCore)->active()->create();
+
+    $this->actingAs($this->owner, 'studio')
+        ->get(route('studio.prompts.show', ItpStage::Attunement->value))
+        ->assertOk()
+        ->assertSee(route('studio.prompts.show', ItpStage::MethodCore->value))
+        ->assertSee("(v{$core->version})")
+        ->assertSee('is prepended to this prompt as its own cached system block');
+
+    $this->actingAs($this->owner, 'studio')
+        ->get(route('studio.prompts.show', ItpStage::Title->value))
+        ->assertDontSee('is prepended to this prompt');
+});
+
+it('edits the method core like a stage, listing the stages it is prepended to and the calls that used it', function () {
+    $core = PromptVersion::factory()->forStage(ItpStage::MethodCore)->active()->create(['body' => 'The shared voice.']);
+    $generation = ItpGeneration::factory()->create();
+    AiUsage::factory()->for($generation, 'generation')->count(2)->create(['stage' => ItpStage::Attunement, 'method_core_version_id' => $core->id, 'cost_usd' => 0.05]);
+
+    $this->actingAs($this->owner, 'studio')
+        ->get(route('studio.prompts.show', ItpStage::MethodCore->value))
+        ->assertOk()
+        ->assertSee('The shared voice.')
+        ->assertSee(collect(ItpStage::methodCoreStages())->map(fn (ItpStage $stage) => route('studio.prompts.show', $stage->value))->all())
+        ->assertDontSee(route('studio.prompts.show', ItpStage::Title->value))
+        ->assertSeeInOrder(['v1', 'Active', '1', '2', '$0.0500']);
+
+    Livewire::actingAs($this->owner, 'studio')
+        ->test(PromptEditor::class, ['stage' => ItpStage::MethodCore])
+        ->set('body', 'The shared voice, warmer.')
+        ->call('saveVersion')
+        ->assertHasNoErrors();
+
+    expect(PromptVersion::activeFor(ItpStage::MethodCore))->version->toBe(2)->body->toBe('The shared voice, warmer.');
+});
+
 it('forbids an editor from saving or activating', function (string $action, array $arguments) {
     Livewire::actingAs(Staff::factory()->editor()->create(), 'studio')
         ->test(PromptEditor::class, ['stage' => ItpStage::Title])

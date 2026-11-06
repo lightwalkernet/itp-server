@@ -2,6 +2,7 @@
 
 namespace App\Models;
 
+use App\Ai\StagePrompt;
 use App\Enums\ItpCompanionType;
 use App\Enums\ItpSafetyRoute;
 use App\Enums\ItpSegmentFlagStatus;
@@ -24,7 +25,10 @@ use Itp\Core\Models\User;
  * One run of the pipeline for one intake, from queued to complete. Server-only: the app sees it
  * only through the API, and gets the finished ITP (`itp_id`) through sync.
  *
- * `prompt_versions` maps each stage that ran to the prompt version it used.
+ * `prompt_versions` maps each stage that ran to the prompt version it used, and `method_core` to
+ * the method-core version the voice stages ran with. `extraction` and `derived_slots` hold the
+ * extraction and reversal stages' results whole, in the prompt library's shapes. `corrections`
+ * is every flag's feedback, oldest first (`recordCorrection()`).
  */
 #[Fillable([
     'user_id',
@@ -32,8 +36,11 @@ use Itp\Core\Models\User;
     'status',
     'safety_route',
     'safety_categories',
+    'safety_confidence',
+    'safety_reason',
     'extraction',
     'derived_slots',
+    'corrections',
     'followup_rounds',
     'prompt_versions',
     'itp_id',
@@ -167,13 +174,41 @@ class ItpGeneration extends Model
     }
 
     /**
-     * Note which prompt version a stage ran with.
+     * Note which prompt versions a call ran with: the stage's own, and the method core's if it
+     * used one.
      */
-    public function recordPromptVersion(ItpStage $stage, PromptVersion $promptVersion): void
+    public function recordPromptVersions(StagePrompt $prompt): void
     {
         $this->forceFill([
-            'prompt_versions' => [...($this->prompt_versions ?? []), $stage->value => $promptVersion->id],
+            'prompt_versions' => [
+                ...($this->prompt_versions ?? []),
+                $prompt->stage->value => $prompt->stagePrompt->id,
+                ...($prompt->methodCore === null ? [] : [ItpStage::MethodCore->value => $prompt->methodCore->id]),
+            ],
         ])->save();
+    }
+
+    /**
+     * Fold a flag's feedback into the stored corrections, so the regeneration and every later
+     * stage (Breathe 11, Quantum Whys, title) keep honouring it. Safe to call again for the same
+     * flag, as a retried job does.
+     */
+    public function recordCorrection(ItpSegmentFlag $flag): void
+    {
+        $corrections = collect($this->corrections ?? []);
+
+        if ($corrections->contains('flag_id', $flag->id)) {
+            return;
+        }
+
+        $this->update([
+            'corrections' => $corrections->push([
+                'flag_id' => $flag->id,
+                'line' => $flag->segment?->text,
+                'explanation' => $flag->user_explanation,
+                'requested_change' => $flag->requested_change,
+            ])->values()->all(),
+        ]);
     }
 
     /**
@@ -187,8 +222,10 @@ class ItpGeneration extends Model
             'status' => ItpStatus::class,
             'safety_route' => ItpSafetyRoute::class,
             'safety_categories' => 'array',
+            'safety_confidence' => 'float',
             'extraction' => 'array',
             'derived_slots' => 'array',
+            'corrections' => 'array',
             'followup_rounds' => 'integer',
             'prompt_versions' => 'array',
             'completed_at' => 'datetime',

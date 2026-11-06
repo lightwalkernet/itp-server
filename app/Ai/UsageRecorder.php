@@ -5,11 +5,12 @@ namespace App\Ai;
 use App\Enums\ItpStage;
 use App\Models\AiUsage;
 use App\Models\ItpGeneration;
-use App\Models\PromptVersion;
 use Illuminate\Support\Facades\Log;
 
 /**
- * Logs one AI call to `ai_usages` and notes the prompt version on its generation.
+ * Logs one AI call to `ai_usages` and notes the prompt versions on its generation. The stage's
+ * own prompt version is `prompt_version_id`; the method core it ran with, if any, is
+ * `method_core_version_id`.
  */
 class UsageRecorder
 {
@@ -20,7 +21,7 @@ class UsageRecorder
         string $model,
         TokenUsage $tokens,
         int $durationMs,
-        PromptVersion $promptVersion,
+        StagePrompt $prompt,
         ?ItpGeneration $generation = null,
     ): AiUsage {
         $cost = $this->cost->calculate($model, $tokens);
@@ -39,11 +40,12 @@ class UsageRecorder
             'cache_write_tokens' => $tokens->cacheWrite,
             'cache_read_tokens' => $tokens->cacheRead,
             'cost_usd' => $cost ?? 0,
-            'prompt_version_id' => $promptVersion->id,
+            'prompt_version_id' => $prompt->stagePrompt->id,
+            'method_core_version_id' => $prompt->methodCore?->id,
             'duration_ms' => $durationMs,
         ]);
 
-        $generation?->recordPromptVersion($stage, $promptVersion);
+        $generation?->recordPromptVersions($prompt);
 
         return $usage;
     }

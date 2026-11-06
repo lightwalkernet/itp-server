@@ -9,9 +9,10 @@ use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
- * A follow-up question in one round. `answered_at` closes it, even when the user skipped it.
+ * A follow-up question in one round, written to fill one extraction gap (`gap_slot`).
+ * `answered_at` closes it, even when the user skipped it.
  */
-#[Fillable(['generation_id', 'round', 'question_text', 'answer_text', 'answered_at'])]
+#[Fillable(['generation_id', 'round', 'gap_slot', 'question_text', 'answer_text', 'answered_at'])]
 class ItpFollowup extends Model
 {
     /** @use HasFactory<ItpFollowupFactory> */

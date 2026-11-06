@@ -3,12 +3,13 @@
 namespace Tests\Fakes;
 
 use App\Ai\Contracts\StructuredModel;
-use App\Ai\Exceptions\MissingPromptVersion;
+use App\Ai\Exceptions\UnusableResponse;
+use App\Ai\StagePrompt;
 use App\Ai\TokenUsage;
 use App\Ai\UsageRecorder;
 use App\Enums\ItpStage;
 use App\Models\ItpGeneration;
-use App\Models\PromptVersion;
+use App\Services\Itp\JsonSchema;
 use Database\Factories\ItpGenerationFactory;
 use PHPUnit\Framework\Assert;
 use Throwable;
@@ -16,9 +17,11 @@ use Throwable;
 /**
  * The gateway every test gets (bound in TestCase): no test reaches the Anthropic API.
  *
- * Like the real gateway, it needs the stage's active prompt version and logs every answered
- * call to `ai_usages`, with the fixed token counts in TOKENS. It answers with the responses
- * queued for the stage, in order, then with a valid default response.
+ * Like the real gateway, it resolves the system prompt (the stage's active version, after the
+ * active method core for the stages that use it), logs every answered call to `ai_usages` with
+ * the fixed token counts in TOKENS, and rejects a response that doesn't match the schema. It
+ * answers with the responses queued for the stage, in order, then with a valid default response
+ * in the prompt library's shape.
  */
 class FakeStructuredModel implements StructuredModel
 {
@@ -30,7 +33,7 @@ class FakeStructuredModel implements StructuredModel
     protected array $queued = [];
 
     /**
-     * @var list<array{stage: ItpStage, user_content: string, schema: array<string, mixed>, generation_id: ?string}>
+     * @var list<array{stage: ItpStage, system: list<array<string, mixed>>, user_content: string, schema: array<string, mixed>, generation_id: ?string}>
      */
     protected array $calls = [];
 
@@ -55,30 +58,37 @@ class FakeStructuredModel implements StructuredModel
 
     public function generate(ItpStage $stage, string $userContent, array $schema, ?ItpGeneration $generation = null): array
     {
-        $promptVersion = PromptVersion::activeFor($stage) ?? throw MissingPromptVersion::forStage($stage);
+        $prompt = StagePrompt::for($stage);
 
         $this->calls[] = [
             'stage' => $stage,
+            'system' => $prompt->systemBlocks(),
             'user_content' => $userContent,
             'schema' => $schema,
             'generation_id' => $generation?->id,
         ];
 
         $response = ($this->queued[$stage->value] ?? []) === []
-            ? static::defaultResponse($stage)
+            ? static::defaultResponse($stage, $userContent)
             : array_shift($this->queued[$stage->value]);
 
         if ($response instanceof Throwable) {
             throw $response;
         }
 
-        $this->usage->record($stage, $stage->model(), static::tokens(), self::DURATION_MS, $promptVersion, $generation);
+        $this->usage->record($stage, $stage->model(), static::tokens(), self::DURATION_MS, $prompt, $generation);
+
+        $violation = JsonSchema::violation($schema, $response);
+
+        if ($violation !== null) {
+            throw UnusableResponse::invalid($stage, $violation, $response);
+        }
 
         return $response;
     }
 
     /**
-     * @return list<array{stage: ItpStage, user_content: string, schema: array<string, mixed>, generation_id: ?string}>
+     * @return list<array{stage: ItpStage, system: list<array<string, mixed>>, user_content: string, schema: array<string, mixed>, generation_id: ?string}>
      */
     public function calls(?ItpStage $stage = null): array
     {
@@ -90,11 +100,17 @@ class FakeStructuredModel implements StructuredModel
      */
     public function lastInput(ItpStage $stage): string
     {
-        $calls = $this->calls($stage);
+        return $this->lastCall($stage)['user_content'];
+    }
 
-        Assert::assertNotEmpty($calls, "The [{$stage->value}] stage was never called.");
-
-        return end($calls)['user_content'];
+    /**
+     * The system block texts of the stage's latest call, in order.
+     *
+     * @return list<string>
+     */
+    public function lastSystem(ItpStage $stage): array
+    {
+        return array_column($this->lastCall($stage)['system'], 'text');
     }
 
     public function assertCalled(ItpStage $stage, ?int $times = null): void
@@ -112,22 +128,50 @@ class FakeStructuredModel implements StructuredModel
     }
 
     /**
-     * A valid response for each stage: enough detail, a clear intake, three segments.
+     * A valid response for each stage, in the library's shape: enough detail, a clear intake,
+     * three segments, and a regeneration of whichever segment the input marks as flagged.
      *
      * @return array<string, mixed>
      */
-    public static function defaultResponse(ItpStage $stage): array
+    public static function defaultResponse(ItpStage $stage, string $userContent = ''): array
     {
         return match ($stage) {
-            ItpStage::Safety => ['route' => 'clear', 'categories' => [], 'confidence' => 0.98],
-            ItpStage::Extraction => ['sufficient' => true, 'gaps' => [], 'slots' => [['name' => 'vision', 'value' => 'Standing on stage, at ease.']]],
-            ItpStage::Followups => ['questions' => ['What would being at ease feel like in your body?']],
+            ItpStage::Safety => ['route' => 'clear', 'categories' => [], 'confidence' => 0.98, 'reason' => 'Ordinary rest and confidence goals.'],
+            ItpStage::Extraction => ItpGenerationFactory::extraction(),
+            ItpStage::Followups => ['questions' => [['gap_slot' => 'scene', 'question_text' => 'What would being at ease feel like in your body?']]],
             ItpStage::Reversal => ItpGenerationFactory::derivedSlots(),
-            ItpStage::Attunement => ['segments' => [['text' => 'Beloved one, breathe in.'], ['text' => 'You are already home.'], ['text' => 'Rest is where you begin.']]],
-            ItpStage::Regeneration => ['text' => 'Here, the tide always returns to you.'],
-            ItpStage::Breathe11 => ['lines' => [['text' => 'I breathe in ease.'], ['text' => 'I breathe out effort.']]],
-            ItpStage::QuantumWhys => ['whys' => ['Why is it so easy for me to rest?', 'Why do I feel so at home?']],
+            ItpStage::Attunement => ['segments' => [
+                ['id' => 1, 'text' => 'Beloved one, breathe in.'],
+                ['id' => 2, 'text' => 'You are already home.'],
+                ['id' => 3, 'text' => 'Rest is where you begin.'],
+            ]],
+            ItpStage::Regeneration => ['segments' => [['id' => static::flaggedId($userContent), 'text' => 'Here, the tide always returns to you.']]],
+            ItpStage::Breathe11 => ['lines' => [['id' => 1, 'text' => 'I breathe in ease.'], ['id' => 2, 'text' => 'I breathe out effort.']]],
+            ItpStage::QuantumWhys => ['questions' => [['id' => 1, 'text' => 'Why is it so easy for me to rest?'], ['id' => 2, 'text' => 'Why do I feel so at home?']]],
             ItpStage::Title => ['title' => 'Coming Home to Rest', 'description' => 'An attunement for letting rest come first.'],
+            ItpStage::MethodCore => Assert::fail('The method core is never called on its own.'),
         };
+    }
+
+    /**
+     * The model-facing id of the flagged segment, from the regeneration input.
+     */
+    protected static function flaggedId(string $userContent): int
+    {
+        preg_match('/## Flagged segment\n\n(\{.*?\n\})/s', $userContent, $matches);
+
+        return (int) (json_decode($matches[1] ?? '{}', true)['id'] ?? 1);
+    }
+
+    /**
+     * @return array{stage: ItpStage, system: list<array<string, mixed>>, user_content: string, schema: array<string, mixed>, generation_id: ?string}
+     */
+    protected function lastCall(ItpStage $stage): array
+    {
+        $calls = $this->calls($stage);
+
+        Assert::assertNotEmpty($calls, "The [{$stage->value}] stage was never called.");
+
+        return end($calls);
     }
 }

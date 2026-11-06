@@ -3,18 +3,31 @@
 namespace App\Services\Itp\Stages;
 
 use App\Ai\Contracts\StructuredModel;
-use App\Ai\Exceptions\UnusableResponse;
 use App\Enums\ItpStage;
 use App\Models\ItpGeneration;
+use App\Services\Itp\IdentifiedTexts;
 use App\Services\Itp\JsonSchema;
 use App\Services\Itp\StageInput;
 
 /**
- * Derives the Quantum Whys from the settled attunement: a list of "Why …?" questions.
+ * Library stage 7. Writes the Quantum Whys from the settled attunement (after the method core).
+ *
+ * Returns `{questions: [{id, text}]}`, stored as a list of strings sorted by id (the shape of
+ * itp-core's `quantum_whys`).
  */
 class QuantumWhysStage
 {
     public function __construct(protected StructuredModel $model) {}
+
+    /**
+     * @return array<string, mixed>
+     */
+    public static function schema(): array
+    {
+        return JsonSchema::object([
+            'questions' => IdentifiedTexts::schema('Position, from 1', 'One "Why …?" question', 'The eleven questions, in order'),
+        ]);
+    }
 
     /**
      * @return list<string>
@@ -24,21 +37,15 @@ class QuantumWhysStage
         $result = $this->model->generate(
             ItpStage::QuantumWhys,
             StageInput::sections([
-                'Addressing' => StageInput::addressing($generation->intake),
                 'Settled attunement' => $generation->attunement->text(),
+                'Derived slots' => StageInput::derivedSlots($generation->derived_slots),
+                'Avoid' => $generation->intake->avoid,
+                'Corrections' => StageInput::corrections($generation),
             ]),
-            JsonSchema::object([
-                'whys' => JsonSchema::list(['type' => 'string'], 'The "Why …?" questions, in order'),
-            ]),
+            static::schema(),
             $generation,
         );
 
-        $whys = collect((array) ($result['whys'] ?? []))
-            ->filter(fn (mixed $why) => is_string($why) && trim($why) !== '')
-            ->map(fn (string $why) => trim($why))
-            ->values()
-            ->all();
-
-        return $whys !== [] ? $whys : throw UnusableResponse::missing(ItpStage::QuantumWhys, 'whys');
+        return array_values(IdentifiedTexts::byId(ItpStage::QuantumWhys, $result['questions'], 'questions', $result));
     }
 }

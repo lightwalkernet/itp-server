@@ -8,11 +8,22 @@ use App\Models\ItpIntake;
 use Illuminate\Support\Collection;
 
 /**
- * Builds the user message for a stage: labelled `## Section` blocks of `Label: value` lines.
- * Empty sections and fields are left out.
+ * Builds the user message for a stage: labelled `## Section` blocks, named in the prompt
+ * library's vocabulary ("Intake", "Slots", "Derived slots", "Follow-up answers", "Settled
+ * attunement", "Corrections", "Avoid", "Address style", "Display name"). Structured data is
+ * pretty-printed JSON. Empty sections are left out.
+ *
+ * Segment ids shown to the model are the segments' `order` (1, 2, 3 …), never database ids.
  */
 class StageInput
 {
+    /**
+     * The keys of the extraction result that are its verdict, not slots.
+     *
+     * @var list<string>
+     */
+    public const array EXTRACTION_VERDICT_KEYS = ['sufficient', 'gaps'];
+
     /**
      * @param  array<string, string|null>  $sections  Heading => body
      */
@@ -35,8 +46,13 @@ class StageInput
             ->implode("\n\n");
     }
 
+    public static function json(mixed $value): string
+    {
+        return (string) json_encode($value, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
     /**
-     * Every intake answer.
+     * Every intake answer, labelled as the questionnaire asks it.
      */
     public static function intake(ItpIntake $intake): string
     {
@@ -51,18 +67,6 @@ class StageInput
             'Q4 Vision' => $intake->q4_vision,
             'Q4 Scene' => $intake->q4_scene,
             'Q5 Soulful' => $intake->q5_soulful,
-            'Avoid' => $intake->avoid,
-        ]);
-    }
-
-    /**
-     * Who the ITP speaks to, and what it must avoid.
-     */
-    public static function addressing(ItpIntake $intake): string
-    {
-        return static::fields([
-            'Display name' => $intake->display_name,
-            'Address style' => $intake->address_style->value,
             'Avoid' => $intake->avoid,
         ]);
     }
@@ -88,43 +92,66 @@ class StageInput
     }
 
     /**
-     * @param  array<string, mixed>|null  $slots
-     */
-    public static function slots(?array $slots): ?string
-    {
-        if (blank($slots)) {
-            return null;
-        }
-
-        return static::fields(collect($slots)
-            ->map(fn (mixed $value) => is_scalar($value) ? (string) $value : json_encode($value))
-            ->all());
-    }
-
-    /**
-     * The extraction stage's findings, for the reversal stage.
+     * The extraction's literal slots (everything but `sufficient` and `gaps`), as JSON.
      *
-     * @param  array{sufficient?: bool, gaps?: list<string>, slots?: list<array{name: string, value: string}>}|null  $extraction
+     * @param  array<string, mixed>|null  $extraction
      */
-    public static function extraction(?array $extraction): ?string
+    public static function slots(?array $extraction): ?string
     {
-        if (blank($extraction)) {
-            return null;
-        }
+        $slots = collect($extraction ?? [])->except(self::EXTRACTION_VERDICT_KEYS);
 
-        return static::fields([
-            ...collect($extraction['slots'] ?? [])->mapWithKeys(fn (array $slot) => [$slot['name'] => $slot['value']])->all(),
-            'Gaps' => implode('; ', $extraction['gaps'] ?? []),
-        ]);
+        return $slots->isEmpty() ? null : static::json($slots->all());
     }
 
     /**
+     * The extraction's gaps, `[{slot, why_thin}]`, as JSON.
+     *
+     * @param  array<string, mixed>|null  $extraction
+     */
+    public static function gaps(?array $extraction): ?string
+    {
+        $gaps = $extraction['gaps'] ?? [];
+
+        return $gaps === [] ? null : static::json($gaps);
+    }
+
+    /**
+     * The reversal's derived slots, as JSON.
+     *
+     * @param  array<string, mixed>|null  $derivedSlots
+     */
+    public static function derivedSlots(?array $derivedSlots): ?string
+    {
+        return blank($derivedSlots) ? null : static::json($derivedSlots);
+    }
+
+    /**
+     * The user's corrections so far, oldest first, as JSON (`ItpGeneration::recordCorrection()`).
+     */
+    public static function corrections(ItpGeneration $generation): ?string
+    {
+        $corrections = collect($generation->corrections ?? [])
+            ->map(fn (array $correction) => collect($correction)->except('flag_id')->all())
+            ->values();
+
+        return $corrections->isEmpty() ? null : static::json($corrections->all());
+    }
+
+    /**
+     * Segments as the model sees them: `[{id, text}]`, where `id` is the segment's order. The
+     * flagged segment, if any, also carries `"flagged": true`.
+     *
      * @param  iterable<ItpAttunementSegment>  $segments
      */
-    public static function segments(iterable $segments): string
+    public static function segments(iterable $segments, ?int $flaggedOrder = null): string
     {
-        return collect($segments)
-            ->map(fn (ItpAttunementSegment $segment) => "[{$segment->order}] {$segment->text}")
-            ->implode("\n");
+        return static::json(collect($segments)
+            ->map(fn (ItpAttunementSegment $segment) => [
+                'id' => $segment->order,
+                'text' => $segment->text,
+                ...($segment->order === $flaggedOrder ? ['flagged' => true] : []),
+            ])
+            ->values()
+            ->all());
     }
 }

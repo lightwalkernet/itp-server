@@ -10,8 +10,9 @@ use Livewire\Component;
 /**
  * Everything one generation went through, for prompt iteration: the intake answers (decrypted
  * through the model casts), the follow-up rounds, what each stage derived, every attunement
- * segment ever written (superseded ones included) with its flags, the companions, the title,
- * every AI call with its cost and prompt version, and the last error.
+ * segment ever written (superseded ones included) with its flags, the corrections folded in from
+ * them, the companions, the title, every AI call with its cost and prompt versions (the stage's
+ * and the method core's), and the last error, which keeps the raw output of an unusable response.
  */
 #[Layout('layouts.studio')]
 class GenerationInspector extends Component
@@ -34,6 +35,7 @@ class GenerationInspector extends Component
             'companions',
             'aiUsages' => fn ($query) => $query->orderBy('created_at')->orderBy('id'),
             'aiUsages.promptVersion:id,stage,version',
+            'aiUsages.methodCoreVersion:id,stage,version',
         ]);
 
         return view('livewire.studio.generation-inspector', [

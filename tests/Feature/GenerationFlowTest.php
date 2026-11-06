@@ -4,7 +4,9 @@ use App\Ai\UsageCost;
 use App\Enums\ItpStage;
 use App\Models\AiUsage;
 use App\Models\ItpGeneration;
+use App\Models\ItpSegmentFlag;
 use App\Models\PromptVersion;
+use Database\Factories\ItpGenerationFactory;
 use Database\Seeders\PromptSeeder;
 use Itp\Core\Models\Itp;
 use Itp\Core\Models\User;
@@ -24,9 +26,9 @@ beforeEach(function () {
 
 it('takes an intake through follow-ups, a flag and acceptance to a finished ITP the phone can pull', function () {
     fakeAi()
-        ->respondWith(ItpStage::Extraction, ['sufficient' => false, 'gaps' => ['vision'], 'slots' => []], ['sufficient' => true, 'gaps' => [], 'slots' => []])
-        ->respondWith(ItpStage::Followups, ['questions' => ['What do you see?']])
-        ->respondWith(ItpStage::Regeneration, ['text' => 'Here, the tide returns to you.']);
+        ->respondWith(ItpStage::Extraction, ItpGenerationFactory::insufficientExtraction('scene'), ItpGenerationFactory::extraction(['scene' => 'The sea at dawn.']))
+        ->respondWith(ItpStage::Followups, ['questions' => [['gap_slot' => 'scene', 'question_text' => 'What do you see?']]])
+        ->respondWith(ItpStage::Regeneration, ['segments' => [['id' => 2, 'text' => 'Here, the tide returns to you.']]]);
 
     $created = $this->withToken($this->token)->postJson(route('api.generations.store'), [
         'display_name' => 'Ann',
@@ -39,7 +41,8 @@ it('takes an intake through follow-ups, a flag and acceptance to a finished ITP 
     ])
         ->assertCreated()
         ->assertJsonPath('data.generation.status', 'awaiting_followup')
-        ->assertJsonPath('data.generation.followups.0.question_text', 'What do you see?');
+        ->assertJsonPath('data.generation.followups.0.question_text', 'What do you see?')
+        ->assertJsonMissingPath('data.generation.followups.0.gap_slot');
 
     $generationId = $created->json('data.generation.id');
 
@@ -55,6 +58,7 @@ it('takes an intake through follow-ups, a flag and acceptance to a finished ITP 
 
     $this->withToken($this->token)->postJson(route('api.generations.segments.flags.store', [$generationId, $flagged['id']]), [
         'user_explanation' => 'Too generic.',
+        'requested_change' => 'Mention the sea.',
     ])
         ->assertAccepted()
         ->assertJsonPath('data.generation.status', 'awaiting_resonance')
@@ -75,14 +79,34 @@ it('takes an intake through follow-ups, a flag and acceptance to a finished ITP 
         ->and($itp->sync_seq)->toBeGreaterThan(0);
 
     $generation = ItpGeneration::sole();
+    $methodCore = PromptVersion::activeFor(ItpStage::MethodCore);
     $stagesRun = [ItpStage::Extraction, ItpStage::Followups, ItpStage::Reversal, ItpStage::Attunement, ItpStage::Regeneration, ItpStage::Breathe11, ItpStage::QuantumWhys, ItpStage::Title];
     expect($generation->prompt_versions)->toEqualCanonicalizing(
-        collect($stagesRun)->mapWithKeys(fn (ItpStage $stage) => [$stage->value => PromptVersion::activeFor($stage)->id])->all(),
-    );
+        collect([...$stagesRun, ItpStage::MethodCore])->mapWithKeys(fn (ItpStage $stage) => [$stage->value => PromptVersion::activeFor($stage)->id])->all(),
+    )
+        ->and($generation->corrections)->toBe([[
+            'flag_id' => ItpSegmentFlag::sole()->id,
+            'line' => 'You are already home.',
+            'explanation' => 'Too generic.',
+            'requested_change' => 'Mention the sea.',
+        ]])
+        ->and($generation->followups()->sole()->gap_slot)->toBe('scene');
 
     $usages = AiUsage::where('generation_id', $generation->id)->get();
     expect($usages)->toHaveCount(9)
         ->and($usages->pluck('stage')->unique()->values()->all())->toEqualCanonicalizing($stagesRun);
+
+    $usages->each(fn (AiUsage $usage) => expect($usage->method_core_version_id)->toBe($usage->stage->usesMethodCore() ? $methodCore->id : null));
+
+    foreach ($stagesRun as $stage) {
+        expect(fakeAi()->lastSystem($stage))->toBe($stage->usesMethodCore()
+            ? [$methodCore->body, PromptVersion::activeFor($stage)->body]
+            : [PromptVersion::activeFor($stage)->body]);
+    }
+
+    foreach ([ItpStage::Breathe11, ItpStage::QuantumWhys, ItpStage::Title] as $stage) {
+        expect(fakeAi()->lastInput($stage))->toContain('"requested_change": "Mention the sea."');
+    }
 
     $usages->each(fn (AiUsage $usage) => expect((float) $usage->cost_usd)
         ->toBe(app(UsageCost::class)->calculate($usage->model, FakeStructuredModel::tokens()))

@@ -35,8 +35,9 @@ return [
     |--------------------------------------------------------------------------
     |
     | The safety check is off until its prompt is ready: with it off, a new
-    | generation goes straight from queued to assessing. Follow-up rounds
-    | cap how often the pipeline may ask the user for more detail.
+    | generation goes straight from queued to assessing. A verdict below
+    | the minimum confidence is treated as sensitive (it fails closed).
+    | Follow-up rounds cap how often the pipeline may ask for more detail.
     |
     | Each user may start this many generations an hour (POST
     | /v1/generations). The pipeline jobs run on their own queue
@@ -46,6 +47,7 @@ return [
 
     'generation' => [
         'safety_check' => (bool) env('ITP_SAFETY_CHECK', false),
+        'safety_min_confidence' => (float) env('ITP_SAFETY_MIN_CONFIDENCE', 0.7),
         'max_followup_rounds' => (int) env('ITP_MAX_FOLLOWUP_ROUNDS', 2),
         'max_per_hour' => (int) env('ITP_GENERATIONS_PER_HOUR', 10),
         'queue_connection' => env('ITP_GENERATION_QUEUE_CONNECTION', 'redis-generation'),
@@ -73,8 +75,14 @@ return [
     |--------------------------------------------------------------------------
     |
     | Model, effort and output cap per pipeline stage, each overridable in
-    | .env. System prompts are not here: they are versioned in Studio
-    | (`prompt_versions`), one active version per stage.
+    | .env. The defaults follow the prompt library's routing: Haiku for
+    | safety and extraction, Opus at high effort for the reversal,
+    | attunement and regeneration, Sonnet for the rest. System prompts
+    | are not here: they are versioned in Studio (`prompt_versions`).
+    |
+    | The method core is cached as a shared prefix only between stages
+    | on the same model and effort (caches are model-scoped), so keep the
+    | Opus stages and the Sonnet companions on one effort each.
     |
     | Prices are USD per million tokens. Thinking tokens bill as output;
     | cache write is the 5-minute TTL rate.

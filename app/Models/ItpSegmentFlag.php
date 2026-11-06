@@ -11,8 +11,10 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 
 /**
  * A user's feedback on one segment, kept as training signal after the segment is replaced.
+ * `resulting_segment_id` is the flagged segment's replacement; `resulting_segment_ids` lists every
+ * segment the regeneration wrote, in order (the replacement and at most one adjacent segment).
  */
-#[Fillable(['generation_id', 'segment_id', 'user_explanation', 'requested_change', 'status', 'resulting_segment_id'])]
+#[Fillable(['generation_id', 'segment_id', 'user_explanation', 'requested_change', 'status', 'resulting_segment_id', 'resulting_segment_ids'])]
 class ItpSegmentFlag extends Model
 {
     /** @use HasFactory<ItpSegmentFlagFactory> */
@@ -51,6 +53,7 @@ class ItpSegmentFlag extends Model
     {
         return [
             'status' => ItpSegmentFlagStatus::class,
+            'resulting_segment_ids' => 'array',
         ];
     }
 }

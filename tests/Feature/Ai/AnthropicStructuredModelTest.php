@@ -31,6 +31,7 @@ beforeEach(function () {
 
     $this->gateway = app(AnthropicStructuredModel::class);
     $this->schema = ['type' => 'object', 'properties' => ['text' => ['type' => 'string']], 'required' => ['text'], 'additionalProperties' => false];
+    $this->methodCore = PromptVersion::factory()->forStage(ItpStage::MethodCore)->active()->create(['body' => '=== ITP METHOD CORE ===']);
 });
 
 /**
@@ -59,7 +60,15 @@ function anthropicMessage(array $overrides = []): Response
     ]));
 }
 
-it('sends the active prompt cached, the schema and the stage settings, and returns the JSON', function () {
+/**
+ * @return array<string, mixed>
+ */
+function sentBody(array $sent, int $index = 0): array
+{
+    return json_decode((string) $sent[$index]['request']->getBody(), true);
+}
+
+it('sends the method core then the stage prompt, each cached, with the schema and the stage settings, and returns the JSON', function () {
     config([
         'itp.ai.stages.regeneration.model' => 'claude-opus-5-5',
         'itp.ai.stages.regeneration.effort' => 'high',
@@ -72,18 +81,31 @@ it('sends the active prompt cached, the schema and the stage settings, and retur
 
     expect($result)->toBe(['text' => 'You are already home.']);
 
-    $body = json_decode((string) $this->sent[0]['request']->getBody(), true);
+    $body = sentBody($this->sent);
     expect((string) $this->sent[0]['request']->getUri())->toEndWith('/v1/messages')
         ->and($body['model'])->toBe('claude-opus-5-5')
         ->and($body['max_tokens'])->toBe(12000)
-        ->and($body['system'])->toBe([['type' => 'text', 'text' => 'Rewrite the flagged line.', 'cache_control' => ['type' => 'ephemeral']]])
+        ->and($body['system'])->toBe([
+            ['type' => 'text', 'text' => '=== ITP METHOD CORE ===', 'cache_control' => ['type' => 'ephemeral']],
+            ['type' => 'text', 'text' => 'Rewrite the flagged line.', 'cache_control' => ['type' => 'ephemeral']],
+        ])
         ->and($body['messages'])->toBe([['role' => 'user', 'content' => 'The flagged line.']])
         ->and($body['thinking'])->toBe(['type' => 'adaptive'])
         ->and($body['output_config'])->toBe(['effort' => 'high', 'format' => ['type' => 'json_schema', 'schema' => $this->schema]])
         ->and($body)->not->toHaveKeys(['temperature', 'top_p']);
 });
 
-it('logs the call with its tokens, cost and prompt version, and notes the version on the generation', function () {
+it('sends only the stage prompt for a stage that does not write in the ITP voice', function (ItpStage $stage) {
+    PromptVersion::factory()->forStage($stage)->active()->create(['body' => 'Classify.']);
+    $this->transport->append(anthropicMessage());
+
+    $this->gateway->generate($stage, 'The intake.', $this->schema);
+
+    expect(sentBody($this->sent)['system'])->toBe([['type' => 'text', 'text' => 'Classify.', 'cache_control' => ['type' => 'ephemeral']]])
+        ->and(AiUsage::sole()->method_core_version_id)->toBeNull();
+})->with([ItpStage::Safety, ItpStage::Extraction, ItpStage::Followups, ItpStage::Title]);
+
+it('logs the call with its tokens, cost and both prompt versions, and notes them on the generation', function () {
     $prompt = PromptVersion::factory()->forStage(ItpStage::Regeneration)->active()->create();
     $generation = ItpGeneration::factory()->create();
     $this->transport->append(anthropicMessage());
@@ -102,8 +124,9 @@ it('logs the call with its tokens, cost and prompt version, and notes the versio
         // 1200 × $4 + 300 × $20 + 4000 × $5, per million tokens
         ->and($usage->cost_usd)->toBe('0.030800')
         ->and($usage->prompt_version_id)->toBe($prompt->id)
+        ->and($usage->method_core_version_id)->toBe($this->methodCore->id)
         ->and($usage->duration_ms)->toBeInt()
-        ->and($generation->fresh()->prompt_versions)->toBe(['regeneration' => $prompt->id]);
+        ->and($generation->fresh()->prompt_versions)->toBe(['regeneration' => $prompt->id, 'method_core' => $this->methodCore->id]);
 });
 
 it('throws on a refusal or a truncated answer, and still logs the billed call', function (string $stopReason, string $message) {
@@ -119,20 +142,43 @@ it('throws on a refusal or a truncated answer, and still logs the billed call', 
     'max tokens' => ['max_tokens', 'The [regeneration] stage hit its max_tokens before finishing.'],
 ]);
 
-it('throws when the answer is not a JSON object', function () {
+it('strips a stray code fence before decoding', function () {
+    PromptVersion::factory()->forStage(ItpStage::Title)->active()->create();
+    $this->transport->append(anthropicMessage(['content' => [['type' => 'text', 'text' => "```json\n{\"text\":\"Fenced.\"}\n```"]]]));
+
+    expect($this->gateway->generate(ItpStage::Title, 'The attunement.', $this->schema))->toBe(['text' => 'Fenced.']);
+});
+
+it('throws with the raw output when the answer is not a JSON object', function () {
     PromptVersion::factory()->forStage(ItpStage::Regeneration)->active()->create();
     $this->transport->append(anthropicMessage(['content' => [['type' => 'text', 'text' => 'not json']]]));
 
     expect(fn () => $this->gateway->generate(ItpStage::Regeneration, 'The flagged line.', $this->schema))
-        ->toThrow(UnusableResponse::class, 'The [regeneration] stage did not return a JSON object.');
+        ->toThrow(UnusableResponse::class, "The [regeneration] stage did not return a JSON object.\n\nRaw output:\nnot json");
 });
 
-it('throws before calling the API when the stage has no active prompt', function () {
-    PromptVersion::factory()->forStage(ItpStage::Regeneration)->create();
+it('throws with the raw output when the JSON does not match the schema', function () {
+    PromptVersion::factory()->forStage(ItpStage::Title)->active()->create();
+    $this->transport->append(anthropicMessage(['content' => [['type' => 'text', 'text' => '{"text":"Hi","extra":1}']]]));
+
+    expect(fn () => $this->gateway->generate(ItpStage::Title, 'The attunement.', $this->schema))
+        ->toThrow(UnusableResponse::class, 'The [title] stage returned an unusable response: $ has unexpected key extra.'."\n\nRaw output:\n".'{"text":"Hi","extra":1}');
+});
+
+it('throws before calling the API when the stage, or the method core it needs, has no active prompt', function (ItpStage $missing) {
+    PromptVersion::factory()->forStage(ItpStage::Regeneration)->active()->create();
+    PromptVersion::query()->where('stage', $missing)->update(['activated_at' => null]);
 
     expect(fn () => $this->gateway->generate(ItpStage::Regeneration, 'The flagged line.', $this->schema))
-        ->toThrow(MissingPromptVersion::class, 'No active prompt version for the [regeneration] stage. Activate one in Studio.');
+        ->toThrow(MissingPromptVersion::class, "No active prompt version for the [{$missing->value}] stage. Activate one in Studio.");
 
     expect($this->sent)->toBe([])
         ->and(AiUsage::count())->toBe(0);
+})->with([ItpStage::Regeneration, ItpStage::MethodCore]);
+
+it('refuses to call the method core on its own', function () {
+    expect(fn () => $this->gateway->generate(ItpStage::MethodCore, 'Anything.', $this->schema))
+        ->toThrow(InvalidArgumentException::class);
+
+    expect($this->sent)->toBe([]);
 });

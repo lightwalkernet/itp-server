@@ -12,7 +12,7 @@ use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Facades\DB;
 
 /**
- * A version of one stage's system prompt, edited in Studio. Exactly one version per stage is
+ * A version of one stage's system prompt, or of the method core, edited in Studio. Exactly one version per stage is
  * active (`activated_at` set); `activate()` is the only way to change which.
  */
 #[Fillable(['stage', 'version', 'body', 'notes', 'created_by_staff_id'])]
@@ -73,13 +73,23 @@ class PromptVersion extends Model
     }
 
     /**
-     * The AI calls that ran with this version.
+     * The AI calls that ran with this version as their stage prompt.
      *
      * @return HasMany<AiUsage, $this>
      */
     public function aiUsages(): HasMany
     {
         return $this->hasMany(AiUsage::class);
+    }
+
+    /**
+     * The AI calls that ran with this version as their method core.
+     *
+     * @return HasMany<AiUsage, $this>
+     */
+    public function methodCoreUsages(): HasMany
+    {
+        return $this->hasMany(AiUsage::class, 'method_core_version_id');
     }
 
     /**
