@@ -19,6 +19,11 @@ use JsonException;
  * entry's `source_key` is the row's slug, so running it again updates rows instead of adding new
  * ones. Writes go through the model, so every created or changed row gets a sync stamp and
  * reaches the phones. Rows missing from the file, and soft-deleted rows, are left alone.
+ *
+ * Each entry's `id` is fixed, so the server row, the app's bundled snapshot and every phone share
+ * one primary key. A row found by slug under a different id (an import from before the ids were
+ * fixed) is re-keyed: force-deleted and created again under the file's id. That leaves the old
+ * id on any phone that already pulled it, which is acceptable only because ITP is pre-release.
  */
 #[Signature('itp:import-universal-itps {--path= : The JSON data file (default: database/data/universal-itps.json)}')]
 #[Description('Create or update the universal and base ITPs from the data file')]
@@ -34,6 +39,8 @@ class ImportUniversalItps extends Command
         'kind',
         'sort_order',
         'title',
+        'short_name',
+        'is_preview',
         'description',
         'image_path',
         'attunement_text',
@@ -82,7 +89,7 @@ class ImportUniversalItps extends Command
             return self::FAILURE;
         }
 
-        $counts = ['created' => 0, 'updated' => 0, 'unchanged' => 0, 'skipped' => 0];
+        $counts = ['created' => 0, 'updated' => 0, 're-keyed' => 0, 'unchanged' => 0, 'skipped' => 0];
 
         DB::transaction(function () use ($entries, &$counts): void {
             foreach ($entries as $entry) {
@@ -91,9 +98,10 @@ class ImportUniversalItps extends Command
         });
 
         $this->components->info(sprintf(
-            'Universal ITPs: %d created, %d updated, %d unchanged.',
+            'Universal ITPs: %d created, %d updated, %d re-keyed, %d unchanged.',
             $counts['created'],
             $counts['updated'],
+            $counts['re-keyed'],
             $counts['unchanged'],
         ));
 
@@ -105,20 +113,44 @@ class ImportUniversalItps extends Command
     }
 
     /**
-     * Create or update the row for one entry, writing only the fields that differ.
+     * Create, re-key or update the row for one entry, writing only the fields that differ. Runs
+     * inside the import's transaction, so a re-key never leaves the slug without a row.
      *
      * @param  array<string, mixed>  $entry
-     * @return 'created'|'updated'|'unchanged'|'skipped'
+     * @return 'created'|'updated'|'re-keyed'|'unchanged'|'skipped'
      */
     private function import(array $entry): string
     {
-        $itp = UniversalItp::withTrashed()->firstWhere('slug', $entry['source_key'])
-            ?? new UniversalItp(['slug' => $entry['source_key']]);
+        $existing = UniversalItp::withTrashed()->firstWhere('slug', $entry['source_key']);
 
-        if ($itp->trashed()) {
+        if ($existing?->trashed()) {
             return 'skipped';
         }
 
+        if ($existing !== null && $existing->getKey() !== $entry['id']) {
+            $existing->forceDelete();
+            $this->write($this->newItp($entry), $entry);
+
+            return 're-keyed';
+        }
+
+        return $this->write($existing ?? $this->newItp($entry), $entry);
+    }
+
+    /**
+     * @param  array<string, mixed>  $entry
+     */
+    private function newItp(array $entry): UniversalItp
+    {
+        return (new UniversalItp(['slug' => $entry['source_key']]))->forceFill(['id' => $entry['id']]);
+    }
+
+    /**
+     * @param  array<string, mixed>  $entry
+     * @return 'created'|'updated'|'unchanged'
+     */
+    private function write(UniversalItp $itp, array $entry): string
+    {
         $changes = collect(self::FIELDS)
             ->mapWithKeys(fn (string $field): array => [$field => $entry[$field] ?? null])
             ->reject(fn (mixed $value, string $field): bool => $itp->exists && $this->isSame($itp->getAttribute($field), $value));
@@ -171,10 +203,13 @@ class ImportUniversalItps extends Command
     {
         return [
             '*' => ['array'],
+            '*.id' => ['required', 'string', 'ulid', 'lowercase', 'distinct'],
             '*.source_key' => ['required', 'string', 'alpha_dash:ascii', 'max:255', 'distinct'],
             '*.kind' => ['required', Rule::enum(UniversalItpKind::class)],
             '*.sort_order' => ['nullable', 'integer', 'min:0'],
             '*.title' => ['required', 'string', 'max:255'],
+            '*.short_name' => ['nullable', 'string', 'max:255'],
+            '*.is_preview' => ['required', 'boolean'],
             '*.description' => ['nullable', 'string'],
             '*.attunement_text' => ['nullable', 'string'],
             '*.image_path' => ['nullable', 'string', 'max:255'],
