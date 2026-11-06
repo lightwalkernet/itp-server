@@ -31,6 +31,21 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Public content pull
+    |--------------------------------------------------------------------------
+    |
+    | GET /v1/content/pull serves the global sync types (universal ITPs,
+    | wildcards) without sign-in. Limited per IP, generously: many phones
+    | can share one carrier address.
+    |
+    */
+
+    'content' => [
+        'requests_per_minute' => (int) env('ITP_CONTENT_REQUESTS_PER_MINUTE', 120),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | Generation pipeline
     |--------------------------------------------------------------------------
     |

@@ -169,6 +169,15 @@ Generation always runs on `itp-server` and always needs a connection, on both bu
 - Every URL to a file in `public/` (images, audio, fonts, CSS `url()` written in Blade) goes through `asset()`. On device the scheme handler serves `public/` only under the `_assets` prefix that `asset()` adds, so a hard-coded `/file.m4a` works in the browser and 404s on the phone.
 - Sync itself: see the sync spec (`.ai/rules/sync.md` in the sync repo). The sync client is active only on the mobile build. On the web build and in `itp-server` the package runs in server role.
 
+### Universal ITPs and audio
+
+- Every universal ITP has a fixed ULID `id` in `itp-server`'s `database/data/universal-itps.json`. `itp:import-universal-itps` writes it, so the server row, the bundled snapshot and every phone share one key. Never regenerate them.
+- `itp:export-content-snapshot` writes the global sync types (universal ITPs, wildcards) as pulled rows without `sync_seq`. `itp-app` bundles the result at `resources/content/snapshot.json` and applies it on first launch, offline and signed out. A bundled row never overwrites a newer `updated_at`, and never moves the sync cursor.
+- `GET /v1/content/pull` is the sync pull for global types, without sign-in: same body as `GET /v1/sync/pull`, rate limited per IP (`content`), any other type 404. Guests pull through it, so server changes reach every phone on load.
+- Guests can play the `is_preview` ITPs. The rest show locked, with "Sign in to play". Signed-in users play all of them.
+- `itp-app` bundles the preview ITPs' audio (attunement and Breath 11), the Introduction audio and every universal image in `public/media`, under the same keys as R2. Other universal audio downloads after sign-in from the public media host (`itp.media_url`).
+- Audio is never replaced in place. A new recording goes up under a new key (`….v2.mp3`) and the row's path changes. The phone downloads any path it doesn't have and deletes files no row references.
+
 ## 8. Navigation and transitions
 
 The single-page omni/accordion structure is retired. Every screen is a real route and a full-page Livewire component.

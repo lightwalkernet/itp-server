@@ -1,6 +1,7 @@
 <?php
 
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\ContentController;
 use App\Http\Controllers\Api\ItpGenerationController;
 use App\Http\Middleware\EnsureMinimumAppVersion;
 use Illuminate\Support\Facades\Route;
@@ -21,6 +22,8 @@ Route::domain(config('itp.api_domain'))
                 Route::post('logout', 'logout')->name('logout');
             });
         });
+
+        Route::get('content/pull', [ContentController::class, 'pull'])->middleware('throttle:content')->name('content.pull');
 
         Route::middleware('auth:sanctum')->group(function () {
             Route::prefix('generations')->name('generations.')->controller(ItpGenerationController::class)->group(function () {

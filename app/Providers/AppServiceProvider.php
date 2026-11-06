@@ -73,6 +73,9 @@ class AppServiceProvider extends ServiceProvider
      *
      * Starting a generation is capped per user (`itp.generation.max_per_hour`): each one costs
      * real money in AI calls.
+     *
+     * The public content pull is capped per IP (`itp.content.requests_per_minute`), loosely: every
+     * guest phone pulls on load, and many can share one carrier address.
      */
     protected function configureRateLimiting(): void
     {
@@ -97,5 +100,8 @@ class AppServiceProvider extends ServiceProvider
 
         RateLimiter::for('generations', fn (Request $request) => Limit::perHour((int) config('itp.generation.max_per_hour'))
             ->by('generations:user:'.$request->user()?->getAuthIdentifier()));
+
+        RateLimiter::for('content', fn (Request $request) => Limit::perMinute((int) config('itp.content.requests_per_minute'))
+            ->by('content:ip:'.$request->ip()));
     }
 }
