@@ -34,7 +34,8 @@ Route::domain(config('itp.api_domain'))
                 Route::middleware('can:view,generation')->group(function () {
                     Route::get('{generation}', 'show')->name('show');
                     Route::post('{generation}/followups', 'storeFollowups')->name('followups.store');
-                    Route::post('{generation}/segments/{segment}/flags', 'storeFlag')->scopeBindings()->name('segments.flags.store');
+                    Route::post('{generation}/sections/{part}/flags', 'storeSectionFlag')->whereNumber('part')->name('sections.flags.store');
+                    Route::post('{generation}/sections/{part}/choice', 'storeSectionChoice')->whereNumber('part')->name('sections.choice.store');
                     Route::post('{generation}/accept', 'accept')->name('accept');
                 });
             });

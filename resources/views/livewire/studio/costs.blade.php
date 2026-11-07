@@ -32,7 +32,7 @@
     <section class="mt-6 rounded-lg bg-white p-5 shadow-sm ring-1 ring-stone-200">
         <h2 class="font-semibold">Cost of a finished personal ITP</h2>
         <p class="mt-1 text-sm text-stone-500">
-            Every AI call a generation made, follow-ups, regenerated segments and retries included, for the {{ number_format($this->perCompletedItp['count']) }} personal {{ Str::plural('ITP', $this->perCompletedItp['count']) }} completed in this range.
+            Every AI call a generation made, follow-ups, rewritten sections and retries included, for the {{ number_format($this->perCompletedItp['count']) }} personal {{ Str::plural('ITP', $this->perCompletedItp['count']) }} completed in this range.
         </p>
         <dl class="mt-4 grid gap-4 sm:grid-cols-2">
             <div>

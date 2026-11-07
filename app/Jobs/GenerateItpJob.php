@@ -142,8 +142,8 @@ class GenerateItpJob implements ShouldQueue
             if ($segments !== []) {
                 $created = $generation->attunement()->create(['version' => 1]);
 
-                foreach ($segments as $index => $text) {
-                    $created->segments()->create(['order' => $index + 1, 'text' => $text, 'version' => 1]);
+                foreach ($segments as $index => $segment) {
+                    $created->segments()->create(['order' => $index + 1, 'part' => $segment['part'], 'text' => $segment['text'], 'version' => 1]);
                 }
             }
 

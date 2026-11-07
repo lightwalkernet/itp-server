@@ -1,5 +1,6 @@
 <?php
 
+use App\Enums\ItpSectionChoice;
 use App\Enums\ItpSegmentFlagStatus;
 use App\Enums\ItpStage;
 use App\Enums\ItpStatus;
@@ -38,16 +39,39 @@ beforeEach(function () {
     ItpFollowup::factory()->for($this->generation, 'generation')->answered('')->create(['round' => 2, 'question_text' => 'Where do you feel it?', 'answer_text' => null]);
 
     $attunement = ItpAttunement::factory()->for($this->generation, 'generation')->create(['version' => 2]);
-    $flagged = ItpAttunementSegment::factory()->for($attunement, 'attunement')->superseded()->create(['order' => 1, 'text' => 'You are a storm.']);
-    $replacement = ItpAttunementSegment::factory()->for($attunement, 'attunement')->create(['order' => 1, 'text' => 'You are the tide.', 'version' => 2]);
-    ItpAttunementSegment::factory()->for($attunement, 'attunement')->create(['order' => 2, 'text' => 'And you return.']);
-    ItpSegmentFlag::factory()->create([
-        'segment_id' => $flagged->id,
+    $line = fn (array $attributes) => ItpAttunementSegment::factory()->for($attunement, 'attunement')->create($attributes);
+
+    $line(['order' => 1, 'part' => 1, 'text' => 'Breathe in, beloved.']);
+
+    $storm = $line(['order' => 2, 'part' => 3, 'text' => 'You are a storm.', 'superseded_at' => now()]);
+    $chosen = ItpSegmentFlag::factory()->create([
+        'segment_id' => $storm->id,
         'user_explanation' => 'Storms scare me.',
         'requested_change' => 'Something calmer.',
         'status' => ItpSegmentFlagStatus::Regenerated,
-        'resulting_segment_id' => $replacement->id,
+        'choice' => ItpSectionChoice::New,
+        'chosen_at' => now(),
     ]);
+    $tide = $line(['order' => 2, 'part' => 3, 'text' => 'You are the tide.', 'version' => 2]);
+    $chosen->update(['resulting_segment_ids' => [$tide->id]]);
+
+    $kept = $line(['order' => 3, 'part' => 8, 'text' => 'And you return.']);
+    $rejected = ItpSegmentFlag::factory()->forSection($this->generation, 8)->create([
+        'user_explanation' => 'Too abrupt.',
+        'status' => ItpSegmentFlagStatus::Regenerated,
+        'choice' => ItpSectionChoice::Original,
+        'chosen_at' => now(),
+    ]);
+    $rejectedLine = $line(['order' => 1, 'part' => 8, 'text' => 'A rejected ending.', 'version' => 3, 'proposed_by_flag_id' => $rejected->id, 'superseded_at' => now()]);
+    $rejected->update(['resulting_segment_ids' => [$rejectedLine->id]]);
+
+    $waiting = ItpSegmentFlag::factory()->create([
+        'segment_id' => $kept->id,
+        'user_explanation' => 'Still abrupt.',
+        'status' => ItpSegmentFlagStatus::Regenerated,
+    ]);
+    $proposedLine = $line(['order' => 1, 'part' => 8, 'text' => 'A softer ending.', 'version' => 3, 'proposed_by_flag_id' => $waiting->id]);
+    $waiting->update(['resulting_segment_ids' => [$proposedLine->id]]);
 
     ItpCompanion::factory()->for($this->generation, 'generation')->create(['content' => [['order' => 1, 'text' => 'Breathe in the tide.']]]);
     ItpCompanion::factory()->for($this->generation, 'generation')->quantumWhys()->create();
@@ -80,13 +104,39 @@ it('shows everything the generation went through', function () {
         ->assertSee('never enough')
         ->assertSee('a tide that always returns')
         ->assertSeeInOrder(['Corrections (1', 'Storms scare me.'])
-        ->assertSeeInOrder(['You are a storm.', 'Storms scare me.', 'Something calmer.', 'You are the tide.', 'And you return.'])
-        ->assertSee('Superseded')
+        ->assertSeeInOrder([
+            'Part 1 · Opening', 'Breathe in, beloved.',
+            'Part 3 · Essence', 'You are the tide.',
+            'chose the new version', 'Storms scare me.', 'Something calmer.', 'Pinpointed line', 'You are a storm.', 'Proposal', 'You are the tide.', 'Current',
+            'Superseded', 'You are a storm.',
+            'Part 8 · Threshold', 'Pinpointed', 'And you return.',
+            'kept the original', 'Too abrupt.', 'A rejected ending.', 'Rejected',
+            'waiting for a choice', 'Still abrupt.', 'Pinpointed line', 'And you return.', 'A softer ending.', 'Waiting',
+        ])
         ->assertSee('Breathe in the tide.')
         ->assertSee('Why is it so easy for me to rest?')
         ->assertSee('The Returning Tide')
         ->assertSee('Rest is where you begin.')
         ->assertSeeInOrder(['regeneration', 'anthropic · claude-opus-5-5', '1,234', '567', '4,000', '8,900', '$0.0346', '2.5s', 'v3', '+ core', 'v7']);
+});
+
+it('shows an attunement from before v2 as one section, with its line flags', function () {
+    $generation = ItpGeneration::factory()->withStatus(ItpStatus::AwaitingResonance)->withLegacyAttunement(2)->create();
+    [$first] = $generation->attunement->currentSegments;
+    $first->update(['superseded_at' => now()]);
+    $replacement = ItpAttunementSegment::factory()->for($generation->attunement, 'attunement')->create(['order' => 1, 'text' => 'The replacement line.', 'version' => 2]);
+    ItpSegmentFlag::factory()->legacy()->create([
+        'segment_id' => $first->id,
+        'user_explanation' => 'Not me.',
+        'status' => ItpSegmentFlagStatus::Regenerated,
+        'resulting_segment_id' => $replacement->id,
+    ]);
+
+    $this->actingAs(Staff::factory()->editor()->create(), 'studio')
+        ->get(route('studio.generations.show', $generation))
+        ->assertOk()
+        ->assertSeeInOrder(['Part 1 · Opening', 'The replacement line.', 'line flag, from before v2', 'Not me.', 'Flagged line', $first->text, 'Replacement', 'The replacement line.', 'Superseded', $first->text])
+        ->assertDontSee('Part 2');
 });
 
 it('decrypts the intake answers stored encrypted at rest', function () {

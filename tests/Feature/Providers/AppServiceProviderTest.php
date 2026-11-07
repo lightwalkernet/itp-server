@@ -3,7 +3,7 @@
 use Anthropic\Client;
 use App\Jobs\DeriveItpCompanionsJob;
 use App\Jobs\GenerateItpJob;
-use App\Jobs\RegenerateItpSegmentJob;
+use App\Jobs\RegenerateItpSectionJob;
 use App\Models\Staff;
 use Illuminate\Support\Facades\Gate;
 
@@ -17,7 +17,7 @@ it('sends every generation job to the generation queue on the generation connect
     expect(app('queue.routes')->getConnection($job))->toBe(config('itp.generation.queue_connection'));
 })->with([
     'generate' => fn () => new GenerateItpJob('01jgeneration'),
-    'regenerate segment' => fn () => new RegenerateItpSegmentJob('01jgeneration', 1),
+    'regenerate section' => fn () => new RegenerateItpSectionJob('01jgeneration', 1),
     'derive companions' => fn () => new DeriveItpCompanionsJob('01jgeneration'),
 ]);
 

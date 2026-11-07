@@ -5,7 +5,8 @@ use App\Models\PromptVersion;
 use Database\Seeders\PromptSeeder;
 
 beforeEach(function () {
-    $this->library = database_path('data/prompts/ITP_Prompt_Library_v1.md');
+    $this->library = database_path('data/prompts/ITP_Prompt_Library_v2.md');
+    $this->v1 = database_path('data/prompts/ITP_Prompt_Library_v1.md');
     $this->copy = sys_get_temp_dir().'/ITP_Prompt_Library_test.md';
 });
 
@@ -13,7 +14,7 @@ afterEach(function () {
     @unlink($this->copy);
 });
 
-it('imports the method core and all nine stage prompts from the committed library as active versions', function () {
+it('imports the method core and all nine stage prompts from the v2 library by default, as active versions', function () {
     $this->artisan('itp:import-prompts')
         ->expectsOutputToContain('10 imported, 0 unchanged.')
         ->assertSuccessful();
@@ -23,7 +24,7 @@ it('imports the method core and all nine stage prompts from the committed librar
     foreach (ItpStage::cases() as $stage) {
         expect(PromptVersion::activeFor($stage))
             ->version->toBe(1)
-            ->notes->toBe('Imported from ITP_Prompt_Library_v1.md')
+            ->notes->toBe('Imported from ITP_Prompt_Library_v2.md')
             ->created_by_staff_id->toBeNull()
             ->body->not->toContain('```');
     }
@@ -37,8 +38,8 @@ it('imports the method core and all nine stage prompts from the committed librar
         ->and(PromptVersion::activeFor(ItpStage::Extraction)->body)->toStartWith('You read a person\'s intake answers')
         ->and(PromptVersion::activeFor(ItpStage::Followups)->body)->toEndWith('{ "questions": [ { "gap_slot": "", "question_text": "" } ] }')
         ->and(PromptVersion::activeFor(ItpStage::Reversal)->body)->toStartWith('You find the single identity-level shift')
-        ->and(PromptVersion::activeFor(ItpStage::Attunement)->body)->toStartWith('Write one personal ITP attunement')
-        ->and(PromptVersion::activeFor(ItpStage::Regeneration)->body)->toEndWith('where id is the id of the segment being replaced.')
+        ->and(PromptVersion::activeFor(ItpStage::Attunement)->body)->toStartWith('Write one personal ITP attunement')->toContain('{ "segments": [ { "id": 1, "part": 1, "text": "" } ] }')
+        ->and(PromptVersion::activeFor(ItpStage::Regeneration)->body)->toStartWith('A person has flagged one section')->toEndWith('where segments are the new lines for this section, in order, numbered from 1.')
         ->and(PromptVersion::activeFor(ItpStage::Breathe11)->body)->toStartWith('Write a Breathe 11')
         ->and(PromptVersion::activeFor(ItpStage::QuantumWhys)->body)->toStartWith('Write the Quantum Whys')
         ->and(PromptVersion::activeFor(ItpStage::Title)->body)->toEndWith('{ "title": "", "description": "" }');
@@ -82,9 +83,66 @@ it('refuses a library with a block missing, saving nothing', function (string $s
 
     expect(PromptVersion::count())->toBe(0);
 })->with([
-    'no stage 5 heading' => ['## Stage 5 — Segment regeneration', '## Segment regeneration', 'regeneration'],
+    'no stage 5 heading' => ['## Stage 5 — Section regeneration', '## Section regeneration', 'regeneration'],
     'no method core heading' => ['### The method core (shared, cached)', '### The shared voice', 'method_core'],
     'a stage without a code block' => ["## Stage 8 — Title and description\n", "## Stage 8 — Title and description\n\n## Elsewhere\n", 'title'],
+]);
+
+it('adds exactly the two prompts v2 changed on top of a v1 import', function () {
+    $this->artisan('itp:import-prompts', ['path' => $this->v1])->assertSuccessful();
+
+    $this->artisan('itp:import-prompts')
+        ->expectsOutputToContain('2 imported, 8 unchanged.')
+        ->assertSuccessful();
+
+    expect(PromptVersion::count())->toBe(12);
+
+    foreach (ItpStage::cases() as $stage) {
+        $changed = in_array($stage, [ItpStage::Attunement, ItpStage::Regeneration], true);
+
+        expect(PromptVersion::activeFor($stage))
+            ->version->toBe($changed ? 2 : 1)
+            ->notes->toBe('Imported from ITP_Prompt_Library_'.($changed ? 'v2' : 'v1').'.md');
+    }
+});
+
+it('imports only the prompts --only names', function () {
+    $this->artisan('itp:import-prompts', ['path' => $this->v1])->assertSuccessful();
+    file_put_contents($this->copy, str_replace('Two to five words. Sentence case.', 'Two to four words. Sentence case.', file_get_contents($this->library)));
+
+    $this->artisan('itp:import-prompts', ['path' => $this->copy, '--only' => 'attunement, regeneration'])
+        ->expectsOutputToContain('2 imported, 0 unchanged.')
+        ->assertSuccessful();
+
+    expect(PromptVersion::count())->toBe(12)
+        ->and(PromptVersion::activeFor(ItpStage::Attunement)->version)->toBe(2)
+        ->and(PromptVersion::activeFor(ItpStage::Regeneration)->version)->toBe(2)
+        ->and(PromptVersion::activeFor(ItpStage::Title)->body)->toContain('Two to five words.');
+
+    $this->artisan('itp:import-prompts', ['--only' => 'attunement,regeneration'])
+        ->expectsOutputToContain('0 imported, 2 unchanged.')
+        ->assertSuccessful();
+});
+
+it('checks only the prompts --only names for a missing block', function () {
+    file_put_contents($this->copy, str_replace('## Stage 8 — Title and description', '## Title and description', file_get_contents($this->library)));
+
+    $this->artisan('itp:import-prompts', ['path' => $this->copy, '--only' => 'regeneration'])
+        ->expectsOutputToContain('1 imported, 0 unchanged.')
+        ->assertSuccessful();
+
+    expect(PromptVersion::count())->toBe(1);
+});
+
+it('refuses an unknown stage in --only, saving nothing', function (string $only, string $message) {
+    $this->artisan('itp:import-prompts', ['--only' => $only])
+        ->expectsOutputToContain($message)
+        ->assertFailed();
+
+    expect(PromptVersion::count())->toBe(0);
+})->with([
+    'a typo' => ['attunement,regen', 'Unknown prompt in --only: regen.'],
+    'nothing named' => [',', 'Unknown prompt in --only: (none given).'],
 ]);
 
 it('fails when there is no file at the path', function () {

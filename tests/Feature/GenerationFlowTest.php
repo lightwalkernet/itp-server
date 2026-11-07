@@ -24,11 +24,11 @@ beforeEach(function () {
     $this->token = $this->user->createToken('iPhone')->plainTextToken;
 });
 
-it('takes an intake through follow-ups, a flag and acceptance to a finished ITP the phone can pull', function () {
+it('takes an intake through follow-ups, a section flag, a choice and acceptance to a finished ITP the phone can pull', function () {
     fakeAi()
         ->respondWith(ItpStage::Extraction, ItpGenerationFactory::insufficientExtraction('scene'), ItpGenerationFactory::extraction(['scene' => 'The sea at dawn.']))
         ->respondWith(ItpStage::Followups, ['questions' => [['gap_slot' => 'scene', 'question_text' => 'What do you see?']]])
-        ->respondWith(ItpStage::Regeneration, ['segments' => [['id' => 2, 'text' => 'Here, the tide returns to you.']]]);
+        ->respondWith(ItpStage::Regeneration, ['segments' => [['id' => 1, 'text' => 'You are already the shore.'], ['id' => 2, 'text' => 'Here, the tide returns to you.']]]);
 
     $created = $this->withToken($this->token)->postJson(route('api.generations.store'), [
         'display_name' => 'Ann',
@@ -52,19 +52,32 @@ it('takes an intake through follow-ups, a flag and acceptance to a finished ITP 
         ->assertAccepted()
         ->assertJsonPath('data.generation.status', 'awaiting_resonance')
         ->assertJsonPath('data.generation.attunement.version', 1)
-        ->assertJsonCount(3, 'data.generation.attunement.segments');
+        ->assertJsonPath('data.generation.attunement.sections.*.part', [1, 3, 8]);
 
-    $flagged = $answered->json('data.generation.attunement.segments.1');
+    $pinpointed = $answered->json('data.generation.attunement.sections.1.segments.0');
 
-    $this->withToken($this->token)->postJson(route('api.generations.segments.flags.store', [$generationId, $flagged['id']]), [
+    $flagged = $this->withToken($this->token)->postJson(route('api.generations.sections.flags.store', [$generationId, 3]), [
         'user_explanation' => 'Too generic.',
         'requested_change' => 'Mention the sea.',
+        'segment_id' => $pinpointed['id'],
     ])
         ->assertAccepted()
         ->assertJsonPath('data.generation.status', 'awaiting_resonance')
+        ->assertJsonPath('data.generation.attunement.version', 1)
+        ->assertJsonPath('data.generation.attunement.sections.1.segments.0.text', 'You are already home.')
+        ->assertJsonPath('data.generation.attunement.sections.1.pinpointed_segment_id', $pinpointed['id'])
+        ->assertJsonPath('data.generation.attunement.sections.1.proposal.segments.*.text', ['You are already the shore.', 'Here, the tide returns to you.']);
+
+    $this->withToken($this->token)->postJson(route('api.generations.accept', $generationId))->assertUnprocessable();
+
+    $this->withToken($this->token)->postJson(route('api.generations.sections.choice.store', [$generationId, 3]), ['keep' => 'new'])
+        ->assertOk()
+        ->assertJsonPath('data.generation.status', 'awaiting_resonance')
         ->assertJsonPath('data.generation.attunement.version', 2)
-        ->assertJsonPath('data.generation.attunement.segments.1.order', 2)
-        ->assertJsonPath('data.generation.attunement.segments.1.text', 'Here, the tide returns to you.');
+        ->assertJsonPath('data.generation.attunement.sections.1.proposal', null)
+        ->assertJsonPath('data.generation.attunement.sections.1.segments.*.order', [2, 3])
+        ->assertJsonPath('data.generation.attunement.sections.1.segments.*.id', $flagged->json('data.generation.attunement.sections.1.proposal.segments.*.id'))
+        ->assertJsonPath('data.generation.attunement.sections.2.segments.0.order', 4);
 
     $completed = $this->withToken($this->token)->postJson(route('api.generations.accept', $generationId))
         ->assertAccepted()
@@ -75,7 +88,7 @@ it('takes an intake through follow-ups, a flag and acceptance to a finished ITP 
     $itp = Itp::sole();
     expect($completed->json('data.generation.itp_id'))->toBe($itp->id)
         ->and($itp->user_id)->toBe($this->user->id)
-        ->and($itp->attunement_text)->toBe("Beloved one, breathe in.\n\nHere, the tide returns to you.\n\nRest is where you begin.")
+        ->and($itp->attunement_text)->toBe("Beloved one, breathe in.\n\nYou are already the shore.\n\nHere, the tide returns to you.\n\nRest is where you begin.")
         ->and($itp->sync_seq)->toBeGreaterThan(0);
 
     $generation = ItpGeneration::sole();
@@ -86,9 +99,12 @@ it('takes an intake through follow-ups, a flag and acceptance to a finished ITP 
     )
         ->and($generation->corrections)->toBe([[
             'flag_id' => ItpSegmentFlag::sole()->id,
+            'part' => 3,
+            'section' => 'You are already home.',
             'line' => 'You are already home.',
             'explanation' => 'Too generic.',
             'requested_change' => 'Mention the sea.',
+            'choice' => 'new',
         ]])
         ->and($generation->followups()->sole()->gap_slot)->toBe('scene');
 
@@ -105,7 +121,7 @@ it('takes an intake through follow-ups, a flag and acceptance to a finished ITP 
     }
 
     foreach ([ItpStage::Breathe11, ItpStage::QuantumWhys, ItpStage::Title] as $stage) {
-        expect(fakeAi()->lastInput($stage))->toContain('"requested_change": "Mention the sea."');
+        expect(fakeAi()->lastInput($stage))->toContain('"requested_change": "Mention the sea."')->toContain('"choice": "new"');
     }
 
     $usages->each(fn (AiUsage $usage) => expect((float) $usage->cost_usd)

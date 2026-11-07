@@ -126,11 +126,14 @@ class StageInput
     }
 
     /**
-     * The user's corrections so far, oldest first, as JSON (`ItpGeneration::recordCorrection()`).
+     * The user's corrections so far, oldest first, as JSON (`ItpGeneration::recordCorrection()`),
+     * without the flag ids. `$exceptFlagId` leaves out one flag's own correction, for the stage
+     * that is answering that flag.
      */
-    public static function corrections(ItpGeneration $generation): ?string
+    public static function corrections(ItpGeneration $generation, ?int $exceptFlagId = null): ?string
     {
         $corrections = collect($generation->corrections ?? [])
+            ->reject(fn (array $correction) => $exceptFlagId !== null && ($correction['flag_id'] ?? null) === $exceptFlagId)
             ->map(fn (array $correction) => collect($correction)->except('flag_id')->all())
             ->values();
 
@@ -138,18 +141,18 @@ class StageInput
     }
 
     /**
-     * Segments as the model sees them: `[{id, text}]`, where `id` is the segment's order. The
-     * flagged segment, if any, also carries `"flagged": true`.
+     * Segments as the model sees them: `[{id, part, text}]`, where `id` is the segment's order and
+     * `part` its section (1 for a line written before v2).
      *
      * @param  iterable<ItpAttunementSegment>  $segments
      */
-    public static function segments(iterable $segments, ?int $flaggedOrder = null): string
+    public static function segments(iterable $segments): string
     {
         return static::json(collect($segments)
             ->map(fn (ItpAttunementSegment $segment) => [
                 'id' => $segment->order,
+                'part' => $segment->sectionPart(),
                 'text' => $segment->text,
-                ...($segment->order === $flaggedOrder ? ['flagged' => true] : []),
             ])
             ->values()
             ->all());

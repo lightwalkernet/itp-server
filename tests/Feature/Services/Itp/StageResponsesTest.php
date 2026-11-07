@@ -77,7 +77,7 @@ dataset('library shapes', [
         'register' => ['mode' => 'enum:responsive_life|spiritual', 'words_to_echo' => ['string'], 'notes' => 'string'],
         'temperature' => 'enum:tender|propulsive|ceremonial|playful|steady',
     ]],
-    'attunement' => [ItpStage::Attunement, fn () => AttunementGenerationStage::schema(), ['segments' => [['id' => 'integer', 'text' => 'string']]]],
+    'attunement' => [ItpStage::Attunement, fn () => AttunementGenerationStage::schema(), ['segments' => [['id' => 'integer', 'part' => 'integer', 'text' => 'string']]]],
     'regeneration' => [ItpStage::Regeneration, fn () => ResonanceRegenerationStage::schema(), ['segments' => [['id' => 'integer', 'text' => 'string']]]],
     'breathe 11' => [ItpStage::Breathe11, fn () => Breathe11Stage::schema(), ['lines' => [['id' => 'integer', 'text' => 'string']]]],
     'quantum whys' => [ItpStage::QuantumWhys, fn () => QuantumWhysStage::schema(), ['questions' => [['id' => 'integer', 'text' => 'string']]]],
@@ -151,19 +151,32 @@ describe('parsing', function () {
         expect(app(ReversalDerivationStage::class)->run($this->generation))->toBe(ItpGenerationFactory::derivedSlots());
     });
 
-    it('orders attunement segments by the model\'s ids and drops blank ones', function () {
-        fakeAi()->respondWith(ItpStage::Attunement, ['segments' => [['id' => 3, 'text' => 'Third.'], ['id' => 1, 'text' => ' First. '], ['id' => 2, 'text' => ' ']]]);
+    it('orders attunement segments by the model\'s ids with their parts, and drops blank ones', function () {
+        fakeAi()->respondWith(ItpStage::Attunement, ['segments' => [
+            ['id' => 3, 'part' => 8, 'text' => 'Third.'],
+            ['id' => 1, 'part' => 1, 'text' => ' First. '],
+            ['id' => 2, 'part' => 1, 'text' => ' '],
+            ['id' => 4, 'part' => 8, 'text' => 'Fourth.'],
+        ]]);
 
-        expect(app(AttunementGenerationStage::class)->run($this->generation))->toBe(['First.', 'Third.']);
+        expect(app(AttunementGenerationStage::class)->run($this->generation))->toBe([
+            ['part' => 1, 'text' => 'First.'],
+            ['part' => 8, 'text' => 'Third.'],
+            ['part' => 8, 'text' => 'Fourth.'],
+        ]);
     });
 
-    it('rejects an attunement with repeated or no segments', function (array $segments, string $message) {
+    it('rejects an attunement with repeated or no segments, or parts out of range or out of order', function (array $segments, string $message) {
         fakeAi()->respondWith(ItpStage::Attunement, ['segments' => $segments]);
 
         expect(fn () => app(AttunementGenerationStage::class)->run($this->generation))->toThrow(UnusableResponse::class, $message);
     })->with([
-        'a repeated id' => [[['id' => 1, 'text' => 'A.'], ['id' => 1, 'text' => 'B.']], 'segments id 1 appears twice'],
-        'nothing' => [[['id' => 1, 'text' => ' ']], 'The [attunement] stage returned no segments.'],
+        'a repeated id' => [[['id' => 1, 'part' => 1, 'text' => 'A.'], ['id' => 1, 'part' => 1, 'text' => 'B.']], 'segments id 1 appears twice'],
+        'nothing' => [[['id' => 1, 'part' => 1, 'text' => ' ']], 'The [attunement] stage returned no segments.'],
+        'no part' => [[['id' => 1, 'text' => 'A.']], '$.segments[0].part is missing'],
+        'part 0' => [[['id' => 1, 'part' => 0, 'text' => 'A.']], 'segment id 1 has part 0, not 1 to 8'],
+        'part 9' => [[['id' => 1, 'part' => 1, 'text' => 'A.'], ['id' => 2, 'part' => 9, 'text' => 'B.']], 'segment id 2 has part 9, not 1 to 8'],
+        'interleaved parts' => [[['id' => 1, 'part' => 1, 'text' => 'A.'], ['id' => 2, 'part' => 3, 'text' => 'B.'], ['id' => 3, 'part' => 2, 'text' => 'C.']], 'segment id 3 is in part 2 after part 3: parts must run in order'],
     ]);
 
     it('rejects an answer in the old, pre-library shape', function () {

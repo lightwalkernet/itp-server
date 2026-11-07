@@ -44,28 +44,43 @@ class ItpGenerationFactory extends Factory
     }
 
     /**
-     * Awaiting resonance, with an attunement of `$segments` lines.
+     * Awaiting resonance, with an attunement of `$segments` lines (see `withAttunement()`).
+     *
+     * @param  list<int|null>|null  $parts
      */
-    public function awaitingResonance(int $segments = 3): static
+    public function awaitingResonance(int $segments = 3, ?array $parts = null): static
     {
-        return $this->withStatus(ItpStatus::AwaitingResonance)->withAttunement($segments);
+        return $this->withStatus(ItpStatus::AwaitingResonance)->withAttunement($segments, $parts);
     }
 
     /**
-     * Give the generation an attunement (version 1) of `$segments` lines.
+     * Give the generation an attunement (version 1) of `$segments` lines. `$parts` gives each
+     * line's part, in order; by default line n is in part n (at most 8), so each is a section.
+     *
+     * @param  list<int|null>|null  $parts
      */
-    public function withAttunement(int $segments = 3): static
+    public function withAttunement(int $segments = 3, ?array $parts = null): static
     {
+        $parts ??= array_map(fn (int $order) => min($order, 8), range(1, $segments));
+
         return $this->state(fn (array $attributes) => [
             'extraction' => ItpGenerationFactory::extraction(),
             'derived_slots' => ItpGenerationFactory::derivedSlots(),
-        ])->afterCreating(function (ItpGeneration $generation) use ($segments) {
+        ])->afterCreating(function (ItpGeneration $generation) use ($segments, $parts) {
             $attunement = ItpAttunement::factory()->for($generation, 'generation')->create();
 
             foreach (range(1, $segments) as $order) {
-                ItpAttunementSegment::factory()->for($attunement, 'attunement')->create(['order' => $order]);
+                ItpAttunementSegment::factory()->for($attunement, 'attunement')->create(['order' => $order, 'part' => $parts[$order - 1] ?? null]);
             }
         });
+    }
+
+    /**
+     * An attunement written before prompt library v2: `$segments` lines with no parts.
+     */
+    public function withLegacyAttunement(int $segments = 3): static
+    {
+        return $this->withAttunement($segments, array_fill(0, $segments, null));
     }
 
     /**

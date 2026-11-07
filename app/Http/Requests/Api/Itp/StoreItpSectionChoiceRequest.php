@@ -2,10 +2,15 @@
 
 namespace App\Http\Requests\Api\Itp;
 
+use App\Enums\ItpSectionChoice;
 use Illuminate\Contracts\Validation\ValidationRule;
 use Illuminate\Foundation\Http\FormRequest;
+use Illuminate\Validation\Rule;
 
-class StoreItpSegmentFlagRequest extends FormRequest
+/**
+ * The user's choice for a rewritten section: keep the new version or their original.
+ */
+class StoreItpSectionChoiceRequest extends FormRequest
 {
     /**
      * Get the validation rules that apply to the request.
@@ -15,8 +20,7 @@ class StoreItpSegmentFlagRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'user_explanation' => ['required', 'string', 'max:2000'],
-            'requested_change' => ['nullable', 'string', 'max:2000'],
+            'keep' => ['required', 'string', Rule::enum(ItpSectionChoice::class)],
         ];
     }
 }
