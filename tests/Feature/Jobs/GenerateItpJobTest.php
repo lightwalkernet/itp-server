@@ -72,10 +72,10 @@ it('writes the attunement when the intake is sufficient', function () {
         ->and($generation->extraction)->toBe(ItpGenerationFactory::extraction())
         ->and($generation->derived_slots)->toBe(ItpGenerationFactory::derivedSlots())
         ->and($generation->attunement->version)->toBe(1)
-        ->and($generation->attunement->currentSegments->pluck('text', 'order')->all())->toBe([
-            1 => 'Beloved one, breathe in.',
-            2 => 'You are already home.',
-            3 => 'Rest is where you begin.',
+        ->and($generation->attunement->currentSegments->map->only('order', 'part', 'text')->all())->toBe([
+            ['order' => 1, 'part' => 1, 'text' => 'Beloved one, breathe in.'],
+            ['order' => 2, 'part' => 3, 'text' => 'You are already home.'],
+            ['order' => 3, 'part' => 8, 'text' => 'Rest is where you begin.'],
         ])
         ->and(fakeAi()->lastInput(ItpStage::Reversal))->toBe("## Slots\n\n".StageInput::slots(ItpGenerationFactory::extraction()))
         ->and(fakeAi()->lastInput(ItpStage::Attunement))

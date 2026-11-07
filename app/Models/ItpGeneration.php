@@ -16,8 +16,9 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Illuminate\Database\Eloquent\Relations\HasMany;
-use Illuminate\Database\Eloquent\Relations\HasManyThrough;
 use Illuminate\Database\Eloquent\Relations\HasOne;
+use Illuminate\Support\Collection as SupportCollection;
+use Illuminate\Support\Facades\DB;
 use Itp\Core\Models\Itp;
 use Itp\Core\Models\User;
 
@@ -28,7 +29,8 @@ use Itp\Core\Models\User;
  * `prompt_versions` maps each stage that ran to the prompt version it used, and `method_core` to
  * the method-core version the voice stages ran with. `extraction` and `derived_slots` hold the
  * extraction and reversal stages' results whole, in the prompt library's shapes. `corrections`
- * is every flag's feedback, oldest first (`recordCorrection()`).
+ * is every flag's feedback, oldest first, with the version of the section the user kept once they
+ * choose (`recordCorrection()`, `recordChoice()`).
  */
 #[Fillable([
     'user_id',
@@ -76,18 +78,6 @@ class ItpGeneration extends Model
     public function attunement(): HasOne
     {
         return $this->hasOne(ItpAttunement::class, 'generation_id');
-    }
-
-    /**
-     * The attunement's current segments. `{segment}` route bindings are scoped through this, so
-     * a superseded segment or one from another generation is a 404.
-     *
-     * @return HasManyThrough<ItpAttunementSegment, ItpAttunement, $this>
-     */
-    public function segments(): HasManyThrough
-    {
-        return $this->hasManyThrough(ItpAttunementSegment::class, ItpAttunement::class, 'generation_id', 'attunement_id')
-            ->whereNull('itp_attunement_segments.superseded_at');
     }
 
     /**
@@ -161,11 +151,45 @@ class ItpGeneration extends Model
     }
 
     /**
-     * The open flag on the segment being regenerated, if any.
+     * The open flag on the section being rewritten, if any.
      */
     public function openFlag(): ?ItpSegmentFlag
     {
         return $this->flags()->where('status', ItpSegmentFlagStatus::Open)->latest('id')->first();
+    }
+
+    /**
+     * The flags whose rewritten section is waiting for the user's choice, by part (at most one
+     * per section), with their proposed lines.
+     *
+     * @return Collection<int, ItpSegmentFlag>
+     */
+    public function flagsAwaitingChoice(): Collection
+    {
+        return $this->flags()
+            ->whereNotNull('part')
+            ->where('status', ItpSegmentFlagStatus::Regenerated)
+            ->whereNull('choice')
+            ->with('proposedSegments')
+            ->orderBy('id')
+            ->get()
+            ->keyBy('part');
+    }
+
+    /**
+     * The flag whose rewrite of this section is waiting for the user's choice, if any.
+     */
+    public function flagAwaitingChoice(int $part): ?ItpSegmentFlag
+    {
+        return $this->flagsAwaitingChoice()->get($part);
+    }
+
+    /**
+     * Whether any section (or this one) has a rewrite waiting for the user's choice.
+     */
+    public function hasProposalWaiting(?int $part = null): bool
+    {
+        return $part === null ? $this->flagsAwaitingChoice()->isNotEmpty() : $this->flagAwaitingChoice($part) !== null;
     }
 
     public function companion(ItpCompanionType $type): ?ItpCompanion
@@ -190,25 +214,51 @@ class ItpGeneration extends Model
 
     /**
      * Fold a flag's feedback into the stored corrections, so the regeneration and every later
-     * stage (Breathe 11, Quantum Whys, title) keep honouring it. Safe to call again for the same
-     * flag, as a retried job does.
+     * stage (Breathe 11, Quantum Whys, title) keep honouring it: the section's part and its lines
+     * as flagged, the line the user pointed to, and what they said. Safe to call again for the
+     * same flag, as a retried job does. `recordChoice()` adds what they kept.
      */
     public function recordCorrection(ItpSegmentFlag $flag): void
     {
-        $corrections = collect($this->corrections ?? []);
+        $section = $this->attunement?->sectionSegments($flag->part)->pluck('text')->implode("\n");
 
-        if ($corrections->contains('flag_id', $flag->id)) {
-            return;
-        }
-
-        $this->update([
-            'corrections' => $corrections->push([
+        $this->changeCorrections(fn (SupportCollection $corrections) => $corrections->contains('flag_id', $flag->id)
+            ? $corrections
+            : $corrections->push([
                 'flag_id' => $flag->id,
+                'part' => $flag->part,
+                'section' => $section,
                 'line' => $flag->segment?->text,
                 'explanation' => $flag->user_explanation,
                 'requested_change' => $flag->requested_change,
-            ])->values()->all(),
-        ]);
+            ]));
+    }
+
+    /**
+     * Note in the flag's correction which version of the section the user kept.
+     */
+    public function recordChoice(ItpSegmentFlag $flag): void
+    {
+        $this->changeCorrections(fn (SupportCollection $corrections) => $corrections->map(
+            fn (array $correction) => ($correction['flag_id'] ?? null) === $flag->id
+                ? [...$correction, 'choice' => $flag->choice?->value]
+                : $correction,
+        ));
+    }
+
+    /**
+     * Change the stored corrections from the row as it is now, locked, so a choice and a
+     * regeneration finishing at the same moment never lose each other's change.
+     *
+     * @param  callable(SupportCollection<int, array<string, mixed>>): SupportCollection<int, array<string, mixed>>  $change
+     */
+    protected function changeCorrections(callable $change): void
+    {
+        DB::transaction(function () use ($change): void {
+            $stored = static::query()->lockForUpdate()->findOrFail($this->id)->corrections ?? [];
+
+            $this->update(['corrections' => $change(collect($stored))->values()->all()]);
+        });
     }
 
     /**

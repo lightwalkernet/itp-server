@@ -69,7 +69,7 @@ class FakeStructuredModel implements StructuredModel
         ];
 
         $response = ($this->queued[$stage->value] ?? []) === []
-            ? static::defaultResponse($stage, $userContent)
+            ? static::defaultResponse($stage)
             : array_shift($this->queued[$stage->value]);
 
         if ($response instanceof Throwable) {
@@ -129,11 +129,11 @@ class FakeStructuredModel implements StructuredModel
 
     /**
      * A valid response for each stage, in the library's shape: enough detail, a clear intake,
-     * three segments, and a regeneration of whichever segment the input marks as flagged.
+     * three segments in parts 1, 3 and 8, and a one-line rewrite of whichever section is flagged.
      *
      * @return array<string, mixed>
      */
-    public static function defaultResponse(ItpStage $stage, string $userContent = ''): array
+    public static function defaultResponse(ItpStage $stage): array
     {
         return match ($stage) {
             ItpStage::Safety => ['route' => 'clear', 'categories' => [], 'confidence' => 0.98, 'reason' => 'Ordinary rest and confidence goals.'],
@@ -141,26 +141,16 @@ class FakeStructuredModel implements StructuredModel
             ItpStage::Followups => ['questions' => [['gap_slot' => 'scene', 'question_text' => 'What would being at ease feel like in your body?']]],
             ItpStage::Reversal => ItpGenerationFactory::derivedSlots(),
             ItpStage::Attunement => ['segments' => [
-                ['id' => 1, 'text' => 'Beloved one, breathe in.'],
-                ['id' => 2, 'text' => 'You are already home.'],
-                ['id' => 3, 'text' => 'Rest is where you begin.'],
+                ['id' => 1, 'part' => 1, 'text' => 'Beloved one, breathe in.'],
+                ['id' => 2, 'part' => 3, 'text' => 'You are already home.'],
+                ['id' => 3, 'part' => 8, 'text' => 'Rest is where you begin.'],
             ]],
-            ItpStage::Regeneration => ['segments' => [['id' => static::flaggedId($userContent), 'text' => 'Here, the tide always returns to you.']]],
+            ItpStage::Regeneration => ['segments' => [['id' => 1, 'text' => 'Here, the tide always returns to you.']]],
             ItpStage::Breathe11 => ['lines' => [['id' => 1, 'text' => 'I breathe in ease.'], ['id' => 2, 'text' => 'I breathe out effort.']]],
             ItpStage::QuantumWhys => ['questions' => [['id' => 1, 'text' => 'Why is it so easy for me to rest?'], ['id' => 2, 'text' => 'Why do I feel so at home?']]],
             ItpStage::Title => ['title' => 'Coming Home to Rest', 'description' => 'An attunement for letting rest come first.'],
             ItpStage::MethodCore => Assert::fail('The method core is never called on its own.'),
         };
-    }
-
-    /**
-     * The model-facing id of the flagged segment, from the regeneration input.
-     */
-    protected static function flaggedId(string $userContent): int
-    {
-        preg_match('/## Flagged segment\n\n(\{.*?\n\})/s', $userContent, $matches);
-
-        return (int) (json_decode($matches[1] ?? '{}', true)['id'] ?? 1);
     }
 
     /**

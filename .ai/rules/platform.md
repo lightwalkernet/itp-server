@@ -155,7 +155,8 @@ Decided Nov 2026: web-only, and a hard delete.
 
 Generation always runs on `itp-server` and always needs a connection, on both builds.
 
-- `itp-app` has one `GenerationClient` (HTTP, Sanctum bearer token) for: submit intake, fetch follow-ups, submit follow-up answers, poll generation status, flag a segment, accept the attunement.
+- `itp-app` has one `GenerationClient` (HTTP, Sanctum bearer token) for: submit intake, fetch follow-ups, submit follow-up answers, poll generation status, flag a section, choose between a rewritten section and the original, accept the attunement.
+- The attunement is reviewed by section, not by line (prompt library v2, `itp-server` `database/data/prompts/ITP_Prompt_Library_v2.md`). Every line belongs to one of eight SHAPE parts. The app shows each part as a plain passage; only Studio shows the part names. A flag rewrites the whole section, optionally pointing to the line that bothered the person most. The rewrite comes back as a proposal beside the original, with "Use this" and "Keep the original". Nothing is replaced until they choose, and accepting waits until every proposal is settled. One section is rewritten at a time. Attunements from before v2 have no parts and count as one section.
 - The same Livewire screens drive the flow on web and mobile. No "direct" implementation on web: one path, one set of bugs.
 - When an attunement is accepted and companions are derived, the finished ITP is written to `itp-core` tables and reaches the phone through normal sync (with its audio downloaded for offline playback).
 - Offline on mobile: the generation entry point shows a clear "needs a connection" state (NativePHP network plugin), and everything already synced keeps working.

@@ -7,6 +7,8 @@ use App\Enums\ItpStatus;
 use App\Models\ItpAttunementSegment;
 use App\Models\ItpFollowup;
 use App\Models\ItpGeneration;
+use App\Models\ItpSegmentFlag;
+use Illuminate\Database\Eloquent\Collection;
 use Illuminate\Http\Request;
 use Illuminate\Http\Resources\Json\JsonResource;
 
@@ -14,8 +16,10 @@ use Illuminate\Http\Resources\Json\JsonResource;
  * The Generation object of the step 6 contract. Keys that don't apply to the status are absent:
  *
  * - `followups` (the open round) while awaiting follow-up answers
- * - `attunement` (current segments) from awaiting resonance on; while regenerating, the flagged
- *   segment carries `regenerating: true`
+ * - `attunement` from awaiting resonance on: its current lines in sections, by part (an
+ *   attunement from before v2 is one section, part 1). The section being rewritten has
+ *   `regenerating: true`; one whose rewrite waits for the user's choice has its `proposal`; either
+ *   names the line the user pointed to (`pinpointed_segment_id`)
  * - `companions`, `title` and `description` once complete
  * - `message` when deferred, blocked or failed
  *
@@ -74,7 +78,7 @@ class ItpGenerationResource extends JsonResource
     }
 
     /**
-     * @return array{attunement?: array{id: int, version: int, segments: list<array<string, mixed>>}}
+     * @return array{attunement?: array{id: int, version: int, sections: list<array<string, mixed>>}}
      */
     protected function attunementWhenWritten(): array
     {
@@ -84,20 +88,53 @@ class ItpGenerationResource extends JsonResource
             return [];
         }
 
-        $regeneratingSegmentId = $this->status === ItpStatus::Regenerating ? $this->openFlag()?->segment_id : null;
+        $rewriting = $this->status === ItpStatus::Regenerating ? $this->openFlag() : null;
+        $awaitingChoice = $this->flagsAwaitingChoice();
 
         return [
             'attunement' => [
                 'id' => $this->attunement->id,
                 'version' => $this->attunement->version,
-                'segments' => $this->attunement->currentSegments->map(fn (ItpAttunementSegment $segment) => [
-                    'id' => $segment->id,
-                    'order' => $segment->order,
-                    'text' => $segment->text,
-                    ...($segment->id === $regeneratingSegmentId ? ['regenerating' => true] : []),
-                ])->all(),
+                'sections' => $this->attunement->sections()
+                    ->map(fn (Collection $segments, int $part) => $this->section($part, $segments, $rewriting?->part === $part ? $rewriting : null, $awaitingChoice->get($part)))
+                    ->values()
+                    ->all(),
             ],
         ];
+    }
+
+    /**
+     * One section: its current lines, whether it is being rewritten, the rewrite waiting for the
+     * user's choice, and the line the user pointed to in the flag being handled.
+     *
+     * @param  Collection<int, ItpAttunementSegment>  $segments
+     * @return array{part: int, segments: list<array{id: int, order: int, text: string}>, regenerating: bool, proposal: ?array{flag_id: int, segments: list<array{id: int, order: int, text: string}>}, pinpointed_segment_id: ?int}
+     */
+    protected function section(int $part, Collection $segments, ?ItpSegmentFlag $rewriting, ?ItpSegmentFlag $awaitingChoice): array
+    {
+        return [
+            'part' => $part,
+            'segments' => $this->lines($segments),
+            'regenerating' => $rewriting !== null,
+            'proposal' => $awaitingChoice === null ? null : [
+                'flag_id' => $awaitingChoice->id,
+                'segments' => $this->lines($awaitingChoice->proposedSegments),
+            ],
+            'pinpointed_segment_id' => ($rewriting ?? $awaitingChoice)?->segment_id,
+        ];
+    }
+
+    /**
+     * @param  Collection<int, ItpAttunementSegment>  $segments
+     * @return list<array{id: int, order: int, text: string}>
+     */
+    protected function lines(Collection $segments): array
+    {
+        return $segments->map(fn (ItpAttunementSegment $segment) => [
+            'id' => $segment->id,
+            'order' => $segment->order,
+            'text' => $segment->text,
+        ])->values()->all();
     }
 
     /**

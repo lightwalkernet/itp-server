@@ -36,20 +36,37 @@ class IdentifiedTexts
      */
     public static function byId(ItpStage $stage, array $items, string $what, array $response): array
     {
-        $texts = [];
+        return array_map(fn (array $item) => $item['text'], static::itemsById($stage, $items, $what, $response));
+    }
+
+    /**
+     * The whole items keyed by id, as `byId()` sorts and filters them, with each text trimmed.
+     * For lists whose items carry more than an id and a text.
+     *
+     * @template TItem of array{id: int, text: string}
+     *
+     * @param  list<TItem>  $items
+     * @param  array<string, mixed>  $response  The whole response, for the error
+     * @return array<int, TItem>
+     *
+     * @throws UnusableResponse
+     */
+    public static function itemsById(ItpStage $stage, array $items, string $what, array $response): array
+    {
+        $byId = [];
 
         foreach ($items as $item) {
-            if (array_key_exists($item['id'], $texts)) {
+            if (array_key_exists($item['id'], $byId)) {
                 throw UnusableResponse::invalid($stage, "{$what} id {$item['id']} appears twice", $response);
             }
 
-            $texts[$item['id']] = trim($item['text']);
+            $byId[$item['id']] = [...$item, 'text' => trim($item['text'])];
         }
 
-        ksort($texts);
+        ksort($byId);
 
-        $texts = array_filter($texts, fn (string $text) => $text !== '');
+        $byId = array_filter($byId, fn (array $item) => $item['text'] !== '');
 
-        return $texts !== [] ? $texts : throw UnusableResponse::missing($stage, $what, $response);
+        return $byId !== [] ? $byId : throw UnusableResponse::missing($stage, $what, $response);
     }
 }

@@ -3,24 +3,26 @@
 namespace App\Http\Controllers\Api;
 
 use App\Actions\Itp\AcceptAttunementAction;
-use App\Actions\Itp\FlagSegmentAction;
+use App\Actions\Itp\ChooseSectionVersionAction;
+use App\Actions\Itp\FlagSectionAction;
 use App\Actions\Itp\SubmitFollowupsAction;
 use App\Actions\Itp\SubmitIntakeAction;
+use App\Enums\ItpSectionChoice;
 use App\Exceptions\GenerationNotReady;
 use App\Http\Controllers\Controller;
 use App\Http\Requests\Api\Itp\StoreItpFollowupAnswersRequest;
 use App\Http\Requests\Api\Itp\StoreItpIntakeRequest;
-use App\Http\Requests\Api\Itp\StoreItpSegmentFlagRequest;
+use App\Http\Requests\Api\Itp\StoreItpSectionChoiceRequest;
+use App\Http\Requests\Api\Itp\StoreItpSectionFlagRequest;
 use App\Http\Resources\ItpGenerationResource;
 use App\Http\Responses\ApiResponse;
-use App\Models\ItpAttunementSegment;
 use App\Models\ItpGeneration;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 
 /**
- * The generation flow for both app builds (platform.md §6, step 6 contract). Routes check
- * ownership through ItpGenerationPolicy; a status that doesn't accept the action is a 422.
+ * The generation flow for both app builds (platform.md §6, step 6 and sections contracts). Routes
+ * check ownership through ItpGenerationPolicy; a status that doesn't accept the action is a 422.
  */
 class ItpGenerationController extends Controller
 {
@@ -63,20 +65,44 @@ class ItpGenerationController extends Controller
         return $this->generationResponse('Answers received.', $generation, 202);
     }
 
-    public function storeFlag(StoreItpSegmentFlagRequest $request, ItpGeneration $generation, ItpAttunementSegment $segment, FlagSegmentAction $flagSegment): JsonResponse
+    /**
+     * Flag one section (`{part}`) and queue its rewrite. A section the attunement doesn't have is
+     * a 404.
+     */
+    public function storeSectionFlag(StoreItpSectionFlagRequest $request, ItpGeneration $generation, int $part, FlagSectionAction $flagSection): JsonResponse
     {
+        abort_unless($generation->attunement?->hasSection($part), 404);
+
         try {
-            $generation = $flagSegment->execute(
+            $generation = $flagSection->execute(
                 $generation,
-                $segment,
+                $part,
                 $request->validated('user_explanation'),
                 $request->validated('requested_change'),
+                $request->validated('segment_id'),
             );
         } catch (GenerationNotReady $exception) {
             return ApiResponse::error($exception->getMessage(), 422);
         }
 
-        return $this->generationResponse('Regenerating the segment.', $generation, 202);
+        return $this->generationResponse('Rewriting the section.', $generation, 202);
+    }
+
+    /**
+     * Keep the rewritten section (`new`) or the original. A section the attunement doesn't have
+     * is a 404.
+     */
+    public function storeSectionChoice(StoreItpSectionChoiceRequest $request, ItpGeneration $generation, int $part, ChooseSectionVersionAction $chooseSectionVersion): JsonResponse
+    {
+        abort_unless($generation->attunement?->hasSection($part), 404);
+
+        try {
+            $generation = $chooseSectionVersion->execute($generation, $part, $request->enum('keep', ItpSectionChoice::class));
+        } catch (GenerationNotReady $exception) {
+            return ApiResponse::error($exception->getMessage(), 422);
+        }
+
+        return $this->generationResponse('Choice saved.', $generation);
     }
 
     public function accept(ItpGeneration $generation, AcceptAttunementAction $acceptAttunement): JsonResponse

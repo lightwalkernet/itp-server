@@ -1,3 +1,5 @@
+@use('App\Enums\ItpSectionChoice')
+
 <main class="mx-auto max-w-6xl px-6 py-10">
     <a href="{{ route('studio.generations.index') }}" class="text-sm text-stone-500 hover:text-stone-900">← All generations</a>
 
@@ -108,36 +110,90 @@
         </h2>
 
         @if ($generation->attunement)
-            <ol class="mt-3 flex flex-col gap-2">
-                @foreach ($generation->attunement->segments as $segment)
-                    <li
-                        wire:key="segment-{{ $segment->id }}"
-                        @class([
-                            'rounded-lg p-4 text-sm ring-1',
-                            'bg-white shadow-sm ring-stone-200' => ! $segment->isSuperseded(),
-                            'bg-stone-100 text-stone-500 ring-stone-200' => $segment->isSuperseded(),
-                        ])
-                    >
-                        <div class="flex flex-wrap items-center gap-2 text-xs text-stone-500">
-                            <span class="font-mono">#{{ $segment->order }} · v{{ $segment->version }}</span>
-                            @if ($segment->isSuperseded())
-                                <span class="rounded-full bg-stone-200 px-2 py-0.5 font-medium text-stone-700">Superseded {{ $segment->superseded_at->format('j M, H:i') }}</span>
-                            @endif
-                        </div>
-                        <p @class(['mt-1 whitespace-pre-wrap', 'line-through decoration-stone-400' => $segment->isSuperseded()])>{{ $segment->text }}</p>
+            <div class="mt-3 flex flex-col gap-6">
+                @foreach ($sections as $section)
+                    @php($pinpointedIds = $section['flags']->whereNotNull('part')->pluck('segment_id')->filter()->all())
+                    <div wire:key="section-{{ $section['part'] }}">
+                        <h3 class="text-sm font-semibold">
+                            Part {{ $section['part'] }}{{ $section['label'] ? ' · '.$section['label'] : '' }}
+                        </h3>
 
-                        @foreach ($segment->flags as $flag)
-                            <div wire:key="flag-{{ $flag->id }}" class="mt-3 rounded border-l-4 border-amber-400 bg-amber-50 px-3 py-2 text-stone-800">
-                                <p class="text-xs font-semibold uppercase tracking-wide text-amber-800">Flagged · {{ $flag->status->value }}</p>
+                        <ol class="mt-2 flex flex-col gap-2">
+                            @forelse ($section['current'] as $segment)
+                                <li wire:key="segment-{{ $segment->id }}" class="rounded-lg bg-white p-4 text-sm shadow-sm ring-1 ring-stone-200">
+                                    <div class="flex flex-wrap items-center gap-2 text-xs text-stone-500">
+                                        <span class="font-mono">#{{ $segment->order }} · v{{ $segment->version }}</span>
+                                        @if (in_array($segment->id, $pinpointedIds, true))
+                                            <span class="rounded-full bg-amber-100 px-2 py-0.5 font-medium text-amber-800">Pinpointed</span>
+                                        @endif
+                                    </div>
+                                    <p class="mt-1 whitespace-pre-wrap">{{ $segment->text }}</p>
+                                </li>
+                            @empty
+                                <li class="text-sm text-stone-500">No current lines.</li>
+                            @endforelse
+                        </ol>
+
+                        @foreach ($section['flags'] as $flag)
+                            <div wire:key="flag-{{ $flag->id }}" class="mt-3 rounded border-l-4 border-amber-400 bg-amber-50 px-3 py-2 text-sm text-stone-800">
+                                <p class="text-xs font-semibold uppercase tracking-wide text-amber-800">
+                                    Flagged · {{ $flag->status->value }}
+                                    @if ($flag->choice === ItpSectionChoice::New)
+                                        · chose the new version {{ $flag->chosen_at?->format('j M, H:i') }}
+                                    @elseif ($flag->choice === ItpSectionChoice::Original)
+                                        · kept the original {{ $flag->chosen_at?->format('j M, H:i') }}
+                                    @elseif ($flag->isAwaitingChoice())
+                                        · waiting for a choice
+                                    @elseif ($flag->part === null)
+                                        · line flag, from before v2
+                                    @endif
+                                </p>
                                 <p class="mt-1"><span class="font-medium">Why:</span> {{ $flag->user_explanation }}</p>
                                 @if (filled($flag->requested_change))
                                     <p class="mt-1"><span class="font-medium">Requested change:</span> {{ $flag->requested_change }}</p>
                                 @endif
+                                @if ($flag->segment)
+                                    <p class="mt-1"><span class="font-medium">{{ $flag->part === null ? 'Flagged line' : 'Pinpointed line' }}:</span> {{ $flag->segment->text }}</p>
+                                @endif
+
+                                @if ($section['proposals'][$flag->id]->isNotEmpty())
+                                    <p class="mt-2 text-xs font-semibold uppercase tracking-wide text-stone-500">{{ $flag->part === null ? 'Replacement' : 'Proposal' }}</p>
+                                    <ol class="mt-1 flex flex-col gap-1">
+                                        @foreach ($section['proposals'][$flag->id] as $proposed)
+                                            <li wire:key="proposed-{{ $flag->id }}-{{ $proposed->id }}" class="flex flex-wrap items-baseline gap-2">
+                                                <span @class(['whitespace-pre-wrap', 'line-through decoration-stone-400 text-stone-500' => $proposed->isRejected()])>{{ $proposed->text }}</span>
+                                                @if ($proposed->isRejected())
+                                                    <span class="rounded-full bg-stone-200 px-2 py-0.5 text-xs font-medium text-stone-700">Rejected</span>
+                                                @elseif ($proposed->isProposed())
+                                                    <span class="rounded-full bg-sky-100 px-2 py-0.5 text-xs font-medium text-sky-800">Waiting</span>
+                                                @elseif ($proposed->isSuperseded())
+                                                    <span class="rounded-full bg-stone-200 px-2 py-0.5 text-xs font-medium text-stone-700">Kept, since superseded</span>
+                                                @else
+                                                    <span class="rounded-full bg-emerald-100 px-2 py-0.5 text-xs font-medium text-emerald-800">Current</span>
+                                                @endif
+                                            </li>
+                                        @endforeach
+                                    </ol>
+                                @endif
                             </div>
                         @endforeach
-                    </li>
+
+                        @if ($section['earlier']->isNotEmpty())
+                            <ol class="mt-3 flex flex-col gap-2">
+                                @foreach ($section['earlier'] as $segment)
+                                    <li wire:key="segment-{{ $segment->id }}" class="rounded-lg bg-stone-100 p-4 text-sm text-stone-500 ring-1 ring-stone-200">
+                                        <div class="flex flex-wrap items-center gap-2 text-xs">
+                                            <span class="font-mono">#{{ $segment->order }} · v{{ $segment->version }}</span>
+                                            <span class="rounded-full bg-stone-200 px-2 py-0.5 font-medium text-stone-700">Superseded {{ $segment->superseded_at->format('j M, H:i') }}</span>
+                                        </div>
+                                        <p class="mt-1 whitespace-pre-wrap line-through decoration-stone-400">{{ $segment->text }}</p>
+                                    </li>
+                                @endforeach
+                            </ol>
+                        @endif
+                    </div>
                 @endforeach
-            </ol>
+            </div>
         @else
             <p class="mt-2 text-sm text-stone-500">No attunement yet.</p>
         @endif

@@ -1,10 +1,11 @@
 <?php
 
+use App\Enums\ItpSectionChoice;
 use App\Enums\ItpSegmentFlagStatus;
 use App\Enums\ItpStatus;
 use App\Jobs\DeriveItpCompanionsJob;
 use App\Jobs\GenerateItpJob;
-use App\Jobs\RegenerateItpSegmentJob;
+use App\Jobs\RegenerateItpSectionJob;
 use App\Models\ItpAttunementSegment;
 use App\Models\ItpCompanion;
 use App\Models\ItpFollowup;
@@ -21,6 +22,32 @@ beforeEach(function () {
     $this->withHeader('X-App-Version', '1.0.0');
     $this->user = User::factory()->create();
 });
+
+/**
+ * Give a section a rewrite waiting for the user's choice, as RegenerateItpSectionJob leaves it.
+ *
+ * @param  list<string>  $lines
+ */
+function sectionAwaitingChoice(ItpGeneration $generation, int $part, array $lines, ?ItpAttunementSegment $pinpointed = null): ItpSegmentFlag
+{
+    $flag = ItpSegmentFlag::factory()->forSection($generation, $part)->create([
+        'segment_id' => $pinpointed?->id,
+        'status' => ItpSegmentFlagStatus::Regenerated,
+    ]);
+
+    $proposed = collect($lines)->map(fn (string $text, int $index) => ItpAttunementSegment::factory()->for($generation->attunement, 'attunement')->create([
+        'order' => $index + 1,
+        'part' => $part,
+        'text' => $text,
+        'version' => 2,
+        'proposed_by_flag_id' => $flag->id,
+    ]));
+
+    $flag->update(['resulting_segment_ids' => $proposed->pluck('id')->all()]);
+    $generation->recordCorrection($flag);
+
+    return $flag;
+}
 
 /**
  * A valid intake, as the app sends it.
@@ -171,24 +198,69 @@ describe('show', function () {
             ]);
     });
 
-    it('shows the current segments in order and marks the one being regenerated', function () {
-        $generation = ItpGeneration::factory()->forUser($this->user)->withStatus(ItpStatus::Regenerating)->withAttunement(2)->create();
+    it('shows the current lines in sections, in part order, and marks the one being rewritten with its pinpointed line', function () {
+        $generation = ItpGeneration::factory()->forUser($this->user)->withStatus(ItpStatus::Regenerating)->withAttunement(3, [1, 3, 3])->create();
         $attunement = $generation->attunement;
-        [$first, $second] = $attunement->currentSegments;
-        ItpAttunementSegment::factory()->for($attunement, 'attunement')->superseded()->create(['order' => 1, 'text' => 'An older first line.']);
-        ItpSegmentFlag::factory()->create(['segment_id' => $second->id]);
+        [$first, $second, $third] = $attunement->currentSegments;
+        ItpAttunementSegment::factory()->for($attunement, 'attunement')->superseded()->create(['order' => 1, 'part' => 1, 'text' => 'An older first line.']);
+        ItpSegmentFlag::factory()->create(['segment_id' => $third->id]);
 
         $this->actingAs($this->user, 'sanctum')
             ->getJson(route('api.generations.show', $generation))
             ->assertOk()
+            ->assertJsonMissingPath('data.generation.attunement.segments')
             ->assertJsonPath('data.generation.attunement', [
                 'id' => $attunement->id,
                 'version' => 1,
-                'segments' => [
-                    ['id' => $first->id, 'order' => 1, 'text' => $first->text],
-                    ['id' => $second->id, 'order' => 2, 'text' => $second->text, 'regenerating' => true],
+                'sections' => [
+                    [
+                        'part' => 1,
+                        'segments' => [['id' => $first->id, 'order' => 1, 'text' => $first->text]],
+                        'regenerating' => false,
+                        'proposal' => null,
+                        'pinpointed_segment_id' => null,
+                    ],
+                    [
+                        'part' => 3,
+                        'segments' => [
+                            ['id' => $second->id, 'order' => 2, 'text' => $second->text],
+                            ['id' => $third->id, 'order' => 3, 'text' => $third->text],
+                        ],
+                        'regenerating' => true,
+                        'proposal' => null,
+                        'pinpointed_segment_id' => $third->id,
+                    ],
                 ],
             ]);
+    });
+
+    it('shows a rewrite waiting for a choice as the section\'s proposal, beside its current lines', function () {
+        $generation = ItpGeneration::factory()->forUser($this->user)->awaitingResonance(2)->create();
+        $second = $generation->attunement->currentSegments[1];
+        $flag = sectionAwaitingChoice($generation, 2, ['The new line.'], $second);
+        $proposed = $flag->proposedSegments->sole();
+
+        $this->actingAs($this->user, 'sanctum')
+            ->getJson(route('api.generations.show', $generation))
+            ->assertOk()
+            ->assertJsonPath('data.generation.attunement.sections.0.proposal', null)
+            ->assertJsonPath('data.generation.attunement.sections.1', [
+                'part' => 2,
+                'segments' => [['id' => $second->id, 'order' => 2, 'text' => $second->text]],
+                'regenerating' => false,
+                'proposal' => ['flag_id' => $flag->id, 'segments' => [['id' => $proposed->id, 'order' => 1, 'text' => 'The new line.']]],
+                'pinpointed_segment_id' => $second->id,
+            ]);
+    });
+
+    it('shows an attunement from before v2 as one section, part 1', function () {
+        $generation = ItpGeneration::factory()->forUser($this->user)->withStatus(ItpStatus::AwaitingResonance)->withLegacyAttunement(3)->create();
+
+        $response = $this->actingAs($this->user, 'sanctum')->getJson(route('api.generations.show', $generation))->assertOk();
+
+        expect($response->json('data.generation.attunement.sections'))->toHaveCount(1)
+            ->and($response->json('data.generation.attunement.sections.0.part'))->toBe(1)
+            ->and($response->json('data.generation.attunement.sections.0.segments.*.order'))->toBe([1, 2, 3]);
     });
 
     it('returns the companions, title and description once complete', function () {
@@ -310,57 +382,103 @@ describe('followups', function () {
     });
 });
 
-describe('flags', function () {
+describe('section flags', function () {
     beforeEach(function () {
-        $this->generation = ItpGeneration::factory()->forUser($this->user)->awaitingResonance()->create();
-        $this->segment = $this->generation->attunement->currentSegments->first();
+        $this->generation = ItpGeneration::factory()->forUser($this->user)->awaitingResonance(3, [1, 3, 3])->create();
+        $this->segments = $this->generation->attunement->currentSegments;
     });
 
-    it('stores the flag, returns 202 while regenerating and queues the segment', function () {
+    it('stores the flag with its pinpointed line, returns 202 while regenerating and queues the section', function () {
         $this->actingAs($this->user, 'sanctum')
-            ->postJson(route('api.generations.segments.flags.store', [$this->generation, $this->segment]), [
+            ->postJson(route('api.generations.sections.flags.store', [$this->generation, 3]), [
                 'user_explanation' => 'Too generic.',
                 'requested_change' => 'Mention the sea.',
+                'segment_id' => $this->segments[2]->id,
             ])
             ->assertAccepted()
             ->assertJsonPath('data.generation.status', 'regenerating')
-            ->assertJsonPath('data.generation.attunement.segments.0.regenerating', true);
+            ->assertJsonPath('data.generation.attunement.sections.0.regenerating', false)
+            ->assertJsonPath('data.generation.attunement.sections.1.regenerating', true)
+            ->assertJsonPath('data.generation.attunement.sections.1.pinpointed_segment_id', $this->segments[2]->id);
 
         $flag = ItpSegmentFlag::sole();
-        expect($flag->segment_id)->toBe($this->segment->id)
+        expect($flag->part)->toBe(3)
+            ->and($flag->segment_id)->toBe($this->segments[2]->id)
             ->and($flag->generation_id)->toBe($this->generation->id)
             ->and($flag->user_explanation)->toBe('Too generic.')
             ->and($flag->requested_change)->toBe('Mention the sea.')
-            ->and($flag->status)->toBe(ItpSegmentFlagStatus::Open);
+            ->and($flag->status)->toBe(ItpSegmentFlagStatus::Open)
+            ->and($flag->choice)->toBeNull();
 
-        Queue::assertPushedOn('generation', RegenerateItpSegmentJob::class, fn (RegenerateItpSegmentJob $job) => $job->flagId === $flag->id);
+        Queue::assertPushedOn('generation', RegenerateItpSectionJob::class, fn (RegenerateItpSectionJob $job) => $job->flagId === $flag->id);
     });
 
-    it('returns 422 unless the generation is awaiting resonance', function () {
-        $this->generation->update(['status' => ItpStatus::Regenerating]);
+    it('takes a flag without a pinpointed line', function () {
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson(route('api.generations.sections.flags.store', [$this->generation, 1]), ['user_explanation' => 'Too generic.'])
+            ->assertAccepted()
+            ->assertJsonPath('data.generation.attunement.sections.0.pinpointed_segment_id', null);
+
+        expect(ItpSegmentFlag::sole()->segment_id)->toBeNull();
+    });
+
+    it('returns 422 while another section is being rewritten', function () {
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson(route('api.generations.sections.flags.store', [$this->generation, 1]), ['user_explanation' => 'Too generic.'])
+            ->assertAccepted();
 
         $this->actingAs($this->user, 'sanctum')
-            ->postJson(route('api.generations.segments.flags.store', [$this->generation, $this->segment]), ['user_explanation' => 'Too generic.'])
+            ->postJson(route('api.generations.sections.flags.store', [$this->generation, 3]), ['user_explanation' => 'Also this.'])
             ->assertUnprocessable()
             ->assertExactJson(['message' => 'This generation is not awaiting resonance.', 'data' => [], 'errors' => []]);
 
-        expect(ItpSegmentFlag::count())->toBe(0);
+        expect(ItpSegmentFlag::count())->toBe(1);
+        Queue::assertPushed(RegenerateItpSectionJob::class, 1);
     });
 
-    it('returns 404 for a segment of another generation or a superseded one', function (Closure $segment) {
+    it('returns 422 for a section whose rewrite is waiting for a choice, but takes another section', function () {
+        sectionAwaitingChoice($this->generation, 3, ['The new line.']);
+
         $this->actingAs($this->user, 'sanctum')
-            ->postJson(route('api.generations.segments.flags.store', [$this->generation, $segment($this->generation)]), ['user_explanation' => 'Too generic.'])
-            ->assertNotFound();
+            ->postJson(route('api.generations.sections.flags.store', [$this->generation, 3]), ['user_explanation' => 'Again.'])
+            ->assertUnprocessable()
+            ->assertExactJson(['message' => 'This section has a new version waiting for a choice.', 'data' => [], 'errors' => []]);
+
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson(route('api.generations.sections.flags.store', [$this->generation, 1]), ['user_explanation' => 'This one.'])
+            ->assertAccepted()
+            ->assertJsonPath('data.generation.attunement.sections.1.proposal.segments.0.text', 'The new line.');
+
+        expect(ItpSegmentFlag::count())->toBe(2);
+    });
+
+    it('returns 422 when the pinpointed line is not a current line of that section', function (Closure $segment) {
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson(route('api.generations.sections.flags.store', [$this->generation, 3]), [
+                'user_explanation' => 'Too generic.',
+                'segment_id' => $segment($this->generation)->id,
+            ])
+            ->assertUnprocessable()
+            ->assertJsonPath('errors', ['segment_id' => ['The selected segment id is invalid.']]);
 
         expect(ItpSegmentFlag::count())->toBe(0);
     })->with([
-        'another generation' => [fn (ItpGeneration $generation) => ItpGeneration::factory()->forUser($generation->user)->awaitingResonance()->create()->attunement->currentSegments->first()],
-        'superseded' => [fn (ItpGeneration $generation) => ItpAttunementSegment::factory()->for($generation->attunement, 'attunement')->superseded()->create()],
+        'another section' => [fn (ItpGeneration $generation) => $generation->attunement->currentSegments[0]],
+        'another generation' => [fn (ItpGeneration $generation) => ItpGeneration::factory()->forUser($generation->user)->awaitingResonance(3, [3, 3, 3])->create()->attunement->currentSegments->first()],
+        'superseded' => [fn (ItpGeneration $generation) => ItpAttunementSegment::factory()->for($generation->attunement, 'attunement')->superseded()->create(['part' => 3])],
     ]);
+
+    it('returns 404 for a section the attunement does not have', function (int $part) {
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson(route('api.generations.sections.flags.store', [$this->generation, $part]), ['user_explanation' => 'Too generic.'])
+            ->assertNotFound();
+
+        expect(ItpSegmentFlag::count())->toBe(0);
+    })->with(['an empty part' => 2, 'past part 8' => 9]);
 
     it('returns 422 for a missing or overlong explanation', function (array $payload, string $field, string $message) {
         $this->actingAs($this->user, 'sanctum')
-            ->postJson(route('api.generations.segments.flags.store', [$this->generation, $this->segment]), $payload)
+            ->postJson(route('api.generations.sections.flags.store', [$this->generation, 1]), $payload)
             ->assertUnprocessable()
             ->assertJsonPath("errors.{$field}", [$message]);
     })->with([
@@ -371,10 +489,122 @@ describe('flags', function () {
 
     it('returns 404 for another user\'s generation', function () {
         $this->actingAs(User::factory()->create(), 'sanctum')
-            ->postJson(route('api.generations.segments.flags.store', [$this->generation, $this->segment]), ['user_explanation' => 'Too generic.'])
+            ->postJson(route('api.generations.sections.flags.store', [$this->generation, 1]), ['user_explanation' => 'Too generic.'])
             ->assertNotFound();
 
         expect(ItpSegmentFlag::count())->toBe(0);
+    });
+});
+
+describe('section choice', function () {
+    beforeEach(function () {
+        $this->generation = ItpGeneration::factory()->forUser($this->user)->awaitingResonance(4, [1, 3, 3, 8])->create();
+        $this->segments = $this->generation->attunement->currentSegments;
+    });
+
+    it('keeps the new version in the old lines\' place, renumbers every line and bumps the version', function () {
+        $flag = sectionAwaitingChoice($this->generation, 3, ['New one.', 'New two.', 'New three.']);
+        $proposed = $flag->proposedSegments;
+
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson(route('api.generations.sections.choice.store', [$this->generation, 3]), ['keep' => 'new'])
+            ->assertOk()
+            ->assertJsonPath('data.generation.status', 'awaiting_resonance')
+            ->assertJsonPath('data.generation.attunement.version', 2)
+            ->assertJsonPath('data.generation.attunement.sections.1.proposal', null)
+            ->assertJsonPath('data.generation.attunement.sections.1.pinpointed_segment_id', null)
+            ->assertJsonPath('data.generation.attunement.sections.1.segments', $proposed->map(fn (ItpAttunementSegment $segment, int $index) => [
+                'id' => $segment->id, 'order' => $index + 2, 'text' => $segment->text,
+            ])->all());
+
+        $attunement = $this->generation->attunement->fresh();
+        expect($attunement->currentSegments->map->only('order', 'part', 'text')->all())->toBe([
+            ['order' => 1, 'part' => 1, 'text' => $this->segments[0]->text],
+            ['order' => 2, 'part' => 3, 'text' => 'New one.'],
+            ['order' => 3, 'part' => 3, 'text' => 'New two.'],
+            ['order' => 4, 'part' => 3, 'text' => 'New three.'],
+            ['order' => 5, 'part' => 8, 'text' => $this->segments[3]->text],
+        ])
+            ->and($attunement->currentSegments->slice(1, 3)->every(fn (ItpAttunementSegment $segment) => $segment->version === 2))->toBeTrue()
+            ->and($this->segments[1]->fresh()->isSuperseded())->toBeTrue()
+            ->and($this->segments[2]->fresh()->isSuperseded())->toBeTrue()
+            ->and($attunement->segments()->count())->toBe(7)
+            ->and($flag->fresh()->choice)->toBe(ItpSectionChoice::New)
+            ->and($flag->fresh()->chosen_at)->not->toBeNull()
+            ->and($this->generation->fresh()->corrections[0]['choice'])->toBe('new');
+    });
+
+    it('keeps the original and marks the proposed lines rejected', function () {
+        $flag = sectionAwaitingChoice($this->generation, 3, ['New one.']);
+        $proposed = $flag->proposedSegments->sole();
+
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson(route('api.generations.sections.choice.store', [$this->generation, 3]), ['keep' => 'original'])
+            ->assertOk()
+            ->assertJsonPath('data.generation.attunement.version', 1)
+            ->assertJsonPath('data.generation.attunement.sections.1.proposal', null);
+
+        expect($this->generation->attunement->fresh()->currentSegments->modelKeys())->toBe($this->segments->modelKeys())
+            ->and($proposed->fresh()->isRejected())->toBeTrue()
+            ->and($flag->fresh()->choice)->toBe(ItpSectionChoice::Original)
+            ->and($this->generation->fresh()->corrections[0]['choice'])->toBe('original');
+    });
+
+    it('works on an attunement from before v2, as one section', function () {
+        $generation = ItpGeneration::factory()->forUser($this->user)->withStatus(ItpStatus::AwaitingResonance)->withLegacyAttunement(3)->create();
+        sectionAwaitingChoice($generation, 1, ['All new.']);
+
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson(route('api.generations.sections.choice.store', [$generation, 1]), ['keep' => 'new'])
+            ->assertOk()
+            ->assertJsonCount(1, 'data.generation.attunement.sections')
+            ->assertJsonPath('data.generation.attunement.sections.0.segments.0.text', 'All new.')
+            ->assertJsonCount(1, 'data.generation.attunement.sections.0.segments');
+    });
+
+    it('returns 422 for a section with no rewrite waiting', function () {
+        sectionAwaitingChoice($this->generation, 3, ['New one.']);
+
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson(route('api.generations.sections.choice.store', [$this->generation, 1]), ['keep' => 'new'])
+            ->assertUnprocessable()
+            ->assertExactJson(['message' => 'This section has no new version waiting for a choice.', 'data' => [], 'errors' => []]);
+
+        expect($this->generation->attunement->fresh()->version)->toBe(1);
+    });
+
+    it('returns 422 once the choice is made', function () {
+        sectionAwaitingChoice($this->generation, 3, ['New one.']);
+        $this->actingAs($this->user, 'sanctum')->postJson(route('api.generations.sections.choice.store', [$this->generation, 3]), ['keep' => 'new'])->assertOk();
+
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson(route('api.generations.sections.choice.store', [$this->generation, 3]), ['keep' => 'original'])
+            ->assertUnprocessable();
+
+        expect($this->generation->attunement->fresh()->version)->toBe(2);
+    });
+
+    it('returns 422 without a valid choice', function (array $payload) {
+        sectionAwaitingChoice($this->generation, 3, ['New one.']);
+
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson(route('api.generations.sections.choice.store', [$this->generation, 3]), $payload)
+            ->assertUnprocessable()
+            ->assertOnlyJsonValidationErrors(['keep']);
+    })->with(['none' => [[]], 'unknown' => [['keep' => 'both']]]);
+
+    it('returns 404 for a section the attunement does not have, or another user\'s generation', function () {
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson(route('api.generations.sections.choice.store', [$this->generation, 2]), ['keep' => 'new'])
+            ->assertNotFound();
+
+        sectionAwaitingChoice($this->generation, 3, ['New one.']);
+
+        $this->actingAs(User::factory()->create(), 'sanctum')
+            ->postJson(route('api.generations.sections.choice.store', [$this->generation, 3]), ['keep' => 'new'])
+            ->assertNotFound();
+
+        expect(ItpSegmentFlag::sole()->choice)->toBeNull();
     });
 });
 
@@ -394,8 +624,20 @@ describe('accept', function () {
         Queue::assertPushedOn('generation', DeriveItpCompanionsJob::class, fn (DeriveItpCompanionsJob $job) => $job->generationId === $this->generation->id);
     });
 
-    it('returns 422 unless the generation is awaiting resonance', function () {
-        $this->generation->update(['status' => ItpStatus::DerivingCompanions]);
+    it('returns 422 while a section\'s rewrite is waiting for a choice', function () {
+        sectionAwaitingChoice($this->generation, 1, ['New one.']);
+
+        $this->actingAs($this->user, 'sanctum')
+            ->postJson(route('api.generations.accept', $this->generation))
+            ->assertUnprocessable()
+            ->assertExactJson(['message' => 'A section has a new version waiting for a choice.', 'data' => [], 'errors' => []]);
+
+        expect($this->generation->attunement->fresh()->settled_at)->toBeNull();
+        Queue::assertNothingPushed();
+    });
+
+    it('returns 422 unless the generation is awaiting resonance', function (ItpStatus $status) {
+        $this->generation->update(['status' => $status]);
 
         $this->actingAs($this->user, 'sanctum')
             ->postJson(route('api.generations.accept', $this->generation))
@@ -403,7 +645,7 @@ describe('accept', function () {
             ->assertExactJson(['message' => 'This generation is not awaiting resonance.', 'data' => [], 'errors' => []]);
 
         Queue::assertNothingPushed();
-    });
+    })->with(['regenerating' => ItpStatus::Regenerating, 'deriving companions' => ItpStatus::DerivingCompanions]);
 
     it('returns 404 for another user\'s generation', function () {
         $this->actingAs(User::factory()->create(), 'sanctum')

@@ -16,12 +16,21 @@ use Illuminate\Support\Facades\File;
  * "## Stage N — …" heading, mapped by N. Every block is saved as a new, active version, unless it
  * is already identical to the active one, so running it twice changes nothing.
  *
- * All or nothing: if any of the ten blocks can't be found, nothing is saved.
+ * `--only` limits the import to the named prompts (stage keys, e.g. `attunement,regeneration`).
+ *
+ * All or nothing: if any of the blocks being imported can't be found, nothing is saved.
  */
-#[Signature('itp:import-prompts {path? : The prompt library (default: database/data/prompts/ITP_Prompt_Library_v1.md)}')]
+#[Signature('itp:import-prompts
+    {path? : The prompt library (default: database/data/prompts/'.ImportPrompts::DEFAULT_LIBRARY.')}
+    {--only= : Import only these prompts, by stage key, comma-separated (e.g. attunement,regeneration)}')]
 #[Description('Import the method core and every stage prompt from the prompt library as new active versions')]
 class ImportPrompts extends Command
 {
+    /**
+     * The library imported when no path is given.
+     */
+    public const string DEFAULT_LIBRARY = 'ITP_Prompt_Library_v2.md';
+
     /**
      * The library's stage numbers.
      *
@@ -44,7 +53,12 @@ class ImportPrompts extends Command
      */
     public function handle(): int
     {
-        $path = $this->argument('path') ?: database_path('data/prompts/ITP_Prompt_Library_v1.md');
+        $path = $this->argument('path') ?: database_path('data/prompts/'.self::DEFAULT_LIBRARY);
+        $only = $this->onlyStages();
+
+        if ($only === null) {
+            return self::FAILURE;
+        }
 
         if (! File::isFile($path)) {
             $this->components->error("No prompt library at {$path}.");
@@ -59,6 +73,8 @@ class ImportPrompts extends Command
         foreach (self::STAGE_NUMBERS as $number => $stage) {
             $bodies[$stage->value] = $this->firstCodeBlock($this->section($markdown, '/^##\s+Stage\s+'.$number.'\s*[—–-].*$/mu'));
         }
+
+        $bodies = array_intersect_key($bodies, array_flip(array_map(fn (ItpStage $stage) => $stage->value, $only)));
 
         $missing = array_keys(array_filter($bodies, fn (?string $body) => blank($body)));
 
@@ -85,6 +101,32 @@ class ImportPrompts extends Command
         $this->components->info("{$imported} imported, ".(count($results) - $imported).' unchanged.');
 
         return self::SUCCESS;
+    }
+
+    /**
+     * The prompts to import: every one, or those `--only` names. Null (after an error) when it
+     * names a prompt that doesn't exist.
+     *
+     * @return list<ItpStage>|null
+     */
+    protected function onlyStages(): ?array
+    {
+        $option = $this->option('only');
+
+        if (blank($option)) {
+            return ItpStage::cases();
+        }
+
+        $names = array_values(array_unique(array_filter(array_map('trim', explode(',', $option)), 'filled')));
+        $unknown = array_values(array_filter($names, fn (string $name) => ItpStage::tryFrom($name) === null));
+
+        if ($names === [] || $unknown !== []) {
+            $this->components->error('Unknown prompt in --only: '.($unknown === [] ? '(none given)' : implode(', ', $unknown)).'. Use: '.implode(', ', array_column(ItpStage::cases(), 'value')).'.');
+
+            return null;
+        }
+
+        return array_map(ItpStage::from(...), $names);
     }
 
     /**

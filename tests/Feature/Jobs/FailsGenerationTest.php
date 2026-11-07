@@ -4,7 +4,7 @@ use App\Ai\Exceptions\UnusableResponse;
 use App\Enums\ItpStage;
 use App\Jobs\DeriveItpCompanionsJob;
 use App\Jobs\GenerateItpJob;
-use App\Jobs\RegenerateItpSegmentJob;
+use App\Jobs\RegenerateItpSectionJob;
 use App\Models\ItpGeneration;
 use Database\Seeders\PromptSeeder;
 use Illuminate\Pipeline\Pipeline;
@@ -52,6 +52,6 @@ it('fails every generation job outright on an unusable response', function (obje
     $job->assertFailedWith(UnusableResponse::class);
 })->with([
     'generate' => fn () => new GenerateItpJob('01jgeneration'),
-    'regenerate segment' => fn () => new RegenerateItpSegmentJob('01jgeneration', 1),
+    'regenerate section' => fn () => new RegenerateItpSectionJob('01jgeneration', 1),
     'derive companions' => fn () => new DeriveItpCompanionsJob('01jgeneration'),
 ]);

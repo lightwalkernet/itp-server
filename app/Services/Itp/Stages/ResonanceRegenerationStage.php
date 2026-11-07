@@ -13,18 +13,16 @@ use App\Services\Itp\JsonSchema;
 use App\Services\Itp\StageInput;
 
 /**
- * Library stage 5. Rewrites the flagged segment (after the method core), given the derived
- * slots, every current segment, the flag and every correction so far (the flag's own included:
- * the job folds it in before calling this).
+ * Library stage 5. Rewrites the flagged section (after the method core), given the derived
+ * slots, every current line with its part, the section's part and lines, the line the user
+ * pointed to (if any), the flag, and every earlier correction.
  *
- * The model sees each segment's `order` as its id, never the database id, and returns
- * `{segments: [{id, text}]}`: the flagged id, plus at most one adjacent id when the line can't be
- * fixed alone. Anything else is unusable.
+ * The model sees each line's `order` as its id, never the database id. It returns
+ * `{segments: [{id, text}]}`: the section's new lines, numbered from 1, which come back in id
+ * order.
  */
 class ResonanceRegenerationStage
 {
-    public const int MAX_REPLACED_SEGMENTS = 2;
-
     public function __construct(protected StructuredModel $model) {}
 
     /**
@@ -34,57 +32,44 @@ class ResonanceRegenerationStage
     {
         return JsonSchema::object([
             'segments' => IdentifiedTexts::schema(
-                'The id of the segment being replaced',
-                'Its new text',
-                'The flagged segment, and at most one adjacent segment',
+                'Position in the new section, from 1',
+                'One new breath-shaped line',
+                'The flagged section\'s new lines, in order',
             ),
         ]);
     }
 
     /**
-     * @return array<int, string> New text by segment order: the flagged segment's, and at most one neighbour's
+     * @return list<string> The section's new lines, in order
      *
      * @throws UnusableResponse
      */
-    public function run(ItpGeneration $generation, ItpAttunementSegment $segment, ItpSegmentFlag $flag): array
+    public function run(ItpGeneration $generation, ItpSegmentFlag $flag): array
     {
-        $current = $generation->attunement->currentSegments()->get();
+        $attunement = $generation->attunement;
+        $section = $attunement->sectionSegments($flag->part);
+        $pinpointed = $section->firstWhere('id', $flag->segment_id);
 
         $result = $this->model->generate(
             ItpStage::Regeneration,
             StageInput::sections([
                 'Derived slots' => StageInput::derivedSlots($generation->derived_slots),
-                'Attunement segments' => StageInput::segments($current, $segment->order),
-                'Flagged segment' => StageInput::json(['id' => $segment->order, 'text' => $segment->text]),
+                'Attunement segments' => StageInput::segments($attunement->currentSegments),
+                'Flagged section' => StageInput::json([
+                    'part' => $flag->part,
+                    'segments' => $section->map(fn (ItpAttunementSegment $segment) => ['id' => $segment->order, 'text' => $segment->text])->all(),
+                ]),
+                'Pinpointed line' => $pinpointed === null ? null : StageInput::json(['id' => $pinpointed->order, 'text' => $pinpointed->text]),
                 'Flag' => StageInput::json([
                     'explanation' => $flag->user_explanation,
                     'requested_change' => $flag->requested_change,
                 ]),
-                'Corrections' => StageInput::corrections($generation),
+                'Corrections' => StageInput::corrections($generation, exceptFlagId: $flag->id),
             ]),
             static::schema(),
             $generation,
         );
 
-        if (count($result['segments']) > self::MAX_REPLACED_SEGMENTS) {
-            throw UnusableResponse::invalid(ItpStage::Regeneration, 'it replaced more than the flagged segment and one adjacent segment', $result);
-        }
-
-        $replacements = IdentifiedTexts::byId(ItpStage::Regeneration, $result['segments'], 'segments', $result);
-        $currentOrders = $current->pluck('order')->all();
-
-        if (! array_key_exists($segment->order, $replacements)) {
-            throw UnusableResponse::invalid(ItpStage::Regeneration, "it did not replace the flagged segment (id {$segment->order})", $result);
-        }
-
-        foreach (array_keys($replacements) as $order) {
-            $isAdjacent = abs($order - $segment->order) === 1 && in_array($order, $currentOrders, true);
-
-            if ($order !== $segment->order && ! $isAdjacent) {
-                throw UnusableResponse::invalid(ItpStage::Regeneration, "segment id {$order} is neither the flagged segment ({$segment->order}) nor next to it", $result);
-            }
-        }
-
-        return $replacements;
+        return array_values(IdentifiedTexts::byId(ItpStage::Regeneration, $result['segments'], 'segments', $result));
     }
 }

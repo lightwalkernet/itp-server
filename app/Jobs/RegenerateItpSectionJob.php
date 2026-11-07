@@ -18,13 +18,13 @@ use Illuminate\Queue\Attributes\Tries;
 use Illuminate\Support\Facades\DB;
 
 /**
- * Replaces a flagged segment, and at most one adjacent segment when the model needed to change
- * it too. The flag's feedback is folded into the generation's corrections first, so it reaches
- * this call and every later stage.
+ * Rewrites a flagged section. The flag's feedback is folded into the generation's corrections
+ * first, so it reaches every later stage.
  *
- * Each replaced segment is superseded, never deleted, and its replacement takes the same order,
- * so the flag keeps the text it was about. The model works in orders (its segment ids); they are
- * mapped back to database rows here. The flag records the segments that were written.
+ * The new lines are written as a proposal (`proposed_by_flag_id`, orders from 1, the flag's
+ * part), not as current lines: the attunement and its version stay as they were until the user
+ * keeps the new version or their original (ChooseSectionVersionAction). The flag records the
+ * lines that were written.
  *
  * regenerating → awaiting_resonance
  */
@@ -32,7 +32,7 @@ use Illuminate\Support\Facades\DB;
 #[Tries(3)]
 #[Backoff(30, 120)]
 #[Timeout(600)]
-class RegenerateItpSegmentJob implements ShouldQueue
+class RegenerateItpSectionJob implements ShouldQueue
 {
     use FailsGeneration, Queueable;
 
@@ -52,31 +52,24 @@ class RegenerateItpSegmentJob implements ShouldQueue
 
         $generation->recordCorrection($flag);
 
-        $segment = $flag->segment;
-        $replacements = $regeneration->run($generation, $segment, $flag);
+        $lines = $regeneration->run($generation, $flag);
 
-        DB::transaction(function () use ($generation, $flag, $segment, $replacements): void {
+        DB::transaction(function () use ($generation, $flag, $lines): void {
             $attunement = $generation->attunement;
-            $version = $attunement->version + 1;
-            $current = $attunement->currentSegments()->get()->keyBy('order');
 
-            $written = collect($replacements)->map(function (string $text, int $order) use ($attunement, $current, $version): ItpAttunementSegment {
-                $current->get($order)->update(['superseded_at' => now()]);
-
-                return $attunement->segments()->create([
-                    'order' => $order,
-                    'text' => $text,
-                    'version' => $version,
-                ]);
-            });
+            $written = collect($lines)->map(fn (string $text, int $index): ItpAttunementSegment => $attunement->segments()->create([
+                'order' => $index + 1,
+                'part' => $flag->part,
+                'text' => $text,
+                'version' => $attunement->version + 1,
+                'proposed_by_flag_id' => $flag->id,
+            ]));
 
             $flag->update([
                 'status' => ItpSegmentFlagStatus::Regenerated,
-                'resulting_segment_id' => $written->get($segment->order)->id,
                 'resulting_segment_ids' => $written->pluck('id')->values()->all(),
             ]);
 
-            $attunement->update(['version' => $version]);
             $generation->update(['status' => ItpStatus::AwaitingResonance]);
         });
     }
