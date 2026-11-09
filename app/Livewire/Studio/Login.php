@@ -32,6 +32,8 @@ class Login extends Component
 
     public bool $codeSent = false;
 
+    public bool $keepSignedIn = false;
+
     /**
      * Mail a code if the email belongs to staff. The screen moves on either way, so the form
      * never tells anyone who is staff.
@@ -84,7 +86,7 @@ class Login extends Component
             ]);
         }
 
-        Auth::guard('studio')->login($staff);
+        Auth::guard('studio')->login($staff, $this->keepSignedIn);
         session()->regenerate();
 
         $this->redirectIntended(route('studio.dashboard'));

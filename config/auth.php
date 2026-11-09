@@ -48,6 +48,7 @@ return [
         'studio' => [
             'driver' => 'session',
             'provider' => 'staff',
+            'remember' => 60 * 24 * 90,
         ],
     ],
 

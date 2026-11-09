@@ -44,6 +44,11 @@
                         @error('code') <p class="text-sm text-red-600">{{ $message }}</p> @enderror
                     </div>
 
+                    <label class="flex items-start gap-2 text-sm text-stone-600">
+                        <input wire:model="keepSignedIn" type="checkbox" class="mt-0.5 rounded border-stone-300">
+                        <span>This is my own device. Keep me signed in for 90 days.</span>
+                    </label>
+
                     <button type="submit" class="rounded-lg bg-stone-900 px-4 py-2 font-medium text-white hover:bg-stone-700 disabled:opacity-50" wire:loading.attr="disabled">
                         Sign in
                     </button>

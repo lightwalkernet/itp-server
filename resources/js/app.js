@@ -1,1 +1,1 @@
-//
+import './reload-when-expired'

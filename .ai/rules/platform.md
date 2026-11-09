@@ -137,6 +137,8 @@ Passwordless email OTP (six digits), unchanged in spirit from the current build.
   - **Web:** `AuthClient::logout()` revokes the Sanctum token (`POST logout`), then `Auth::logout()`, session invalidate and token regenerate. If the API call fails, the local session still ends.
   - **Mobile:** the same API call, then the sync sign-out wipe and removing the token from SecureStorage.
 - The only per-build difference is where the token is stored. Bind that with the platform flag (section 3a).
+- **Staying signed in on the web.** The phone stays signed in until sign-out. The web build and Studio offer "This is my own device. Keep me signed in for 90 days.", unticked by default, counted from sign-in and not renewed by visits. The web build keeps the user id and API token in an encrypted cookie (`App\Auth\TrustedBrowser`, `itp.trusted_device_days`), because Laravel's remember-me needs a `remember_token` on the shared `users` table and wouldn't restore the token. Studio uses Laravel's remember-me on `staff` (`auth.guards.studio.remember`). Sign-out, or a 401 from the API, ends it.
+- Livewire's "page expired" box is never shown: `resources/js/reload-when-expired.js` reloads the page on a 419, in `itp-app` and Studio.
 - First name is still collected only if empty, checked on every boot.
 - **A 401 on any API call signs the app out.** On mobile that runs the sync sign-out wipe. This is how a phone learns its account was deleted or its token revoked.
 

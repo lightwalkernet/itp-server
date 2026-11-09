@@ -5,6 +5,8 @@ use App\Livewire\Studio\Login;
 use App\Mail\OtpCodeMail;
 use App\Models\EmailVerificationCode;
 use App\Models\Staff;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\Support\Facades\Cookie;
 use Illuminate\Support\Facades\Mail;
 use Itp\Core\Models\User;
 use Livewire\Livewire;
@@ -159,4 +161,66 @@ it('goes back to the email step', function () {
         ->call('useDifferentEmail')
         ->assertSet('codeSent', false)
         ->assertSet('code', '');
+});
+
+/**
+ * Finish a Studio sign-in with the box ticked or not, returning the name of the remember cookie.
+ */
+function signInToStudio(Staff $staff, bool $keepSignedIn): string
+{
+    Livewire::test(Login::class)
+        ->set('email', $staff->email)
+        ->set('codeSent', true)
+        ->set('code', EmailVerificationCode::issue(CodeAudience::Studio, $staff->email))
+        ->set('keepSignedIn', $keepSignedIn)
+        ->call('verifyCode')
+        ->assertHasNoErrors();
+
+    return Auth::guard('studio')->getRecallerName();
+}
+
+it('keeps staff signed in for 90 days when the box is ticked', function () {
+    $staff = Staff::factory()->create();
+
+    $cookie = Cookie::queued(signInToStudio($staff, keepSignedIn: true));
+
+    expect($staff->fresh()->getRememberToken())->not->toBeNull()
+        ->and($cookie->isHttpOnly())->toBeTrue()
+        ->and($cookie->getExpiresTime())->toBeGreaterThan(now()->addDays(89)->getTimestamp())
+        ->and($cookie->getExpiresTime())->toBeLessThanOrEqual(now()->addDays(90)->addMinute()->getTimestamp());
+});
+
+it('does not keep staff signed in unless the box is ticked', function () {
+    $name = signInToStudio(Staff::factory()->create(), keepSignedIn: false);
+
+    expect(Cookie::hasQueued($name))->toBeFalse();
+});
+
+it('signs staff back in from the remember cookie when the session has gone', function () {
+    $staff = Staff::factory()->create();
+    $cookie = Cookie::queued(signInToStudio($staff, keepSignedIn: true));
+    Auth::guard('studio')->forgetUser();
+    session()->flush();
+    $this->app['auth']->forgetGuards();
+
+    $this->withCookie($cookie->getName(), $cookie->getValue())
+        ->get(route('studio.dashboard'))
+        ->assertOk();
+
+    $this->assertAuthenticatedAs($staff, 'studio');
+});
+
+it('stops remembering staff on sign-out', function () {
+    $staff = Staff::factory()->create();
+    $cookie = Cookie::queued(signInToStudio($staff, keepSignedIn: true));
+    $rememberToken = $staff->fresh()->getRememberToken();
+    Auth::guard('studio')->forgetUser();
+    session()->flush();
+    $this->app['auth']->forgetGuards();
+
+    $this->withCookie($cookie->getName(), $cookie->getValue())
+        ->post(route('studio.logout'))
+        ->assertCookieExpired($cookie->getName());
+
+    expect($staff->fresh()->getRememberToken())->not->toBe($rememberToken);
 });
