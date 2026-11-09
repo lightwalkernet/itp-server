@@ -242,7 +242,7 @@ it('imports the committed data file: thirteen universal ITPs and the Introductio
         ->assertSuccessful();
 
     expect(UniversalItp::preview()->pluck('slug')->all())
-        ->toEqualCanonicalizing(['awaken-wonder', 'abundance', 'healing', 'nervous-system-reset'])
+        ->toEqualCanonicalizing(['awaken-wonder', 'abundance', 'healing', 'nervous-system-reset', 'introduction'])
         ->and(UniversalItp::whereNull('short_name')->count())->toBe(0)
         ->and(UniversalItp::where('slug', 'embody-courage-and-strength')->sole())
         ->title->toBe('Embody Courage and Strength')
