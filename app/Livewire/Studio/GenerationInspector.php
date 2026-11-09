@@ -2,7 +2,10 @@
 
 namespace App\Livewire\Studio;
 
+use App\Actions\Itp\RetryGenerationAction;
 use App\Enums\ItpAttunementPart;
+use App\Enums\ItpStatus;
+use App\Exceptions\GenerationNotReady;
 use App\Models\ItpAttunementSegment;
 use App\Models\ItpGeneration;
 use App\Models\ItpSegmentFlag;
@@ -27,6 +30,20 @@ class GenerationInspector extends Component
     public function mount(ItpGeneration $generation): void
     {
         $this->generation = $generation;
+    }
+
+    /**
+     * Restart a failed generation from where it stopped. Owner only, like failed jobs (platform.md §9).
+     */
+    public function retry(RetryGenerationAction $retry): void
+    {
+        $this->authorize('retryGenerations');
+
+        try {
+            $this->generation = $retry->execute($this->generation);
+        } catch (GenerationNotReady $exception) {
+            $this->addError('retry', $exception->getMessage());
+        }
     }
 
     public function render(): View
@@ -63,6 +80,7 @@ class GenerationInspector extends Component
             'sections' => $this->sections($generation),
             'totalCost' => (float) $generation->aiUsages->sum('cost_usd'),
             'canOpenPrompts' => auth('studio')->user()?->can('managePrompts') ?? false,
+            'canRetry' => $generation->status === ItpStatus::Failed && (auth('studio')->user()?->can('retryGenerations') ?? false),
         ])->title('Generation '.$generation->created_at->format('j M Y, H:i'));
     }
 

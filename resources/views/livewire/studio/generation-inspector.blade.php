@@ -18,6 +18,16 @@
         @endif
     </p>
 
+    @if ($canRetry)
+        <div class="mt-6 flex flex-wrap items-center gap-3">
+            <button type="button" wire:click="retry" wire:loading.attr="disabled" class="rounded-lg bg-stone-900 px-4 py-2 text-sm font-medium text-white hover:bg-stone-700 disabled:opacity-50">
+                Retry this generation
+            </button>
+            <p class="text-sm text-stone-500">Carries on from where it stopped. Finished stages aren't run or paid for again.</p>
+        </div>
+    @endif
+    @error('retry') <p class="mt-3 text-sm text-red-600">{{ $message }}</p> @enderror
+
     @if ($generation->last_error)
         <section class="mt-6 rounded-lg bg-red-50 p-4 ring-1 ring-red-200">
             <h2 class="text-sm font-semibold text-red-800">Last error</h2>

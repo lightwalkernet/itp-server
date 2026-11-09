@@ -4,6 +4,8 @@ use App\Enums\ItpSectionChoice;
 use App\Enums\ItpSegmentFlagStatus;
 use App\Enums\ItpStage;
 use App\Enums\ItpStatus;
+use App\Jobs\GenerateItpJob;
+use App\Livewire\Studio\GenerationInspector;
 use App\Models\AiUsage;
 use App\Models\ItpAttunement;
 use App\Models\ItpAttunementSegment;
@@ -16,7 +18,9 @@ use App\Models\PromptVersion;
 use App\Models\Staff;
 use Database\Factories\ItpGenerationFactory;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Queue;
 use Itp\Core\Models\User;
+use Livewire\Livewire;
 
 beforeEach(function () {
     $this->withoutVite();
@@ -164,4 +168,41 @@ it('links each call to its prompt versions for the owner only', function (string
 
 it('sends guests to the sign-in page', function () {
     $this->get(route('studio.generations.show', $this->generation))->assertRedirect(route('studio.login'));
+});
+
+it('lets the owner retry a failed generation from its page', function () {
+    Queue::fake();
+    $owner = Staff::factory()->owner()->create();
+
+    Livewire::actingAs($owner, 'studio')
+        ->test(GenerationInspector::class, ['generation' => $this->generation])
+        ->assertSee('Retry this generation')
+        ->call('retry')
+        ->assertHasNoErrors()
+        ->assertDontSee('Retry this generation')
+        ->assertDontSee('RuntimeException: Overloaded');
+
+    Queue::assertPushed(GenerateItpJob::class);
+});
+
+it('keeps retrying from editors, as with failed jobs', function () {
+    Queue::fake();
+    $editor = Staff::factory()->editor()->create();
+
+    Livewire::actingAs($editor, 'studio')
+        ->test(GenerationInspector::class, ['generation' => $this->generation])
+        ->assertDontSee('Retry this generation')
+        ->call('retry')
+        ->assertForbidden();
+
+    expect($this->generation->fresh()->status)->toBe(ItpStatus::Failed);
+    Queue::assertNothingPushed();
+});
+
+it('offers no retry unless the generation has failed', function () {
+    $this->generation->update(['status' => ItpStatus::AwaitingResonance]);
+
+    Livewire::actingAs(Staff::factory()->owner()->create(), 'studio')
+        ->test(GenerationInspector::class, ['generation' => $this->generation])
+        ->assertDontSee('Retry this generation');
 });

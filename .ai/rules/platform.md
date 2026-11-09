@@ -215,6 +215,7 @@ Hand-built Livewire, no Filament. Lives in `itp-server` on `studio.`.
 | Capability | Owner (Aaron) | Editor (sister) |
 |---|---|---|
 | Horizon, failed jobs, queue health, logs | yes | no |
+| Retry a failed generation (inspector button, carries on from where it stopped) | yes | no |
 | App users and accounts | yes | no |
 | Pipeline config (model routing, effort levels) | yes | no |
 | Intakes **including personal answers** | yes | yes |

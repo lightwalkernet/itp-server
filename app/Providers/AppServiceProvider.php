@@ -65,6 +65,7 @@ class AppServiceProvider extends ServiceProvider
     {
         Gate::define('managePrompts', fn (Staff $staff): bool => $staff->isOwner());
         Gate::define('viewCosts', fn (Staff $staff): bool => $staff->isOwner());
+        Gate::define('retryGenerations', fn (Staff $staff): bool => $staff->isOwner());
     }
 
     /**
