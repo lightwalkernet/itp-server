@@ -8,6 +8,7 @@ use App\Http\Requests\Api\Auth\CompleteProfileRequest;
 use App\Http\Requests\Api\Auth\SendCodeRequest;
 use App\Http\Requests\Api\Auth\VerifyCodeRequest;
 use App\Http\Resources\UserResource;
+use App\Http\Resources\UserSettingResource;
 use App\Http\Responses\ApiResponse;
 use App\Mail\OtpCodeMail;
 use App\Models\EmailVerificationCode;
@@ -36,8 +37,8 @@ class AuthController extends Controller
     }
 
     /**
-     * Spend a code and sign in, creating the account on first sign-in. Every sign-in gets a new
-     * token; other devices stay signed in.
+     * Spend a code and sign in, creating the account and its settings row on first sign-in. Every
+     * sign-in gets a new token; other devices stay signed in.
      *
      * @throws ValidationException when the code is refused
      */
@@ -56,7 +57,11 @@ class AuthController extends Controller
                 $user->forceFill(['email_verified_at' => now()])->save();
             }
 
-            return [$user, $user->createToken($request->validated('device_name'))->plainTextToken];
+            return [
+                $user,
+                $user->settings()->firstOrCreate(),
+                $user->createToken($request->validated('device_name'))->plainTextToken,
+            ];
         });
 
         if ($signIn === null) {
@@ -65,10 +70,11 @@ class AuthController extends Controller
             ]);
         }
 
-        [$user, $token] = $signIn;
+        [$user, $settings, $token] = $signIn;
 
         return ApiResponse::success('Signed in.', [
             'user' => UserResource::make($user),
+            'settings' => UserSettingResource::make($settings),
             'token' => $token,
             'needs_profile' => $user->first_name === null,
         ]);

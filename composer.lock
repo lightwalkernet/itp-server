@@ -2308,12 +2308,12 @@
             "source": {
                 "type": "git",
                 "url": "https://github.com/lightwalkernet/itp-core.git",
-                "reference": "06d02eb08c6ca839aacff50a716e915fb61697dc"
+                "reference": "946e63a86c1856567b17d31188903326f9ba919b"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/lightwalkernet/itp-core/zipball/06d02eb08c6ca839aacff50a716e915fb61697dc",
-                "reference": "06d02eb08c6ca839aacff50a716e915fb61697dc",
+                "url": "https://api.github.com/repos/lightwalkernet/itp-core/zipball/946e63a86c1856567b17d31188903326f9ba919b",
+                "reference": "946e63a86c1856567b17d31188903326f9ba919b",
                 "shasum": ""
             },
             "require": {
@@ -2355,7 +2355,7 @@
                 "source": "https://github.com/lightwalkernet/itp-core/tree/main",
                 "issues": "https://github.com/lightwalkernet/itp-core/issues"
             },
-            "time": "2026-11-06T23:58:07+00:00"
+            "time": "2026-11-15T21:08:14+00:00"
         },
         {
             "name": "lightwalkernet/sync",

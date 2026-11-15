@@ -70,7 +70,8 @@ class AppServiceProvider extends ServiceProvider
 
     /**
      * Sign-in limits, per email and per IP. The IP limits are loose, because a mobile carrier
-     * can put many users behind one address. Wrong guesses are also capped per code.
+     * can put many users behind one address. Wrong guesses are also capped per code. Account
+     * deletion codes (`deletion-code`, `delete-account`) have the same limits, counted apart.
      *
      * Starting a generation is capped per user (`itp.generation.max_per_hour`): each one costs
      * real money in AI calls.
@@ -80,24 +81,28 @@ class AppServiceProvider extends ServiceProvider
      */
     protected function configureRateLimiting(): void
     {
-        RateLimiter::for('send-code', function (Request $request) {
-            $email = SendCodeRequest::normalizeEmail($request->input('email'));
+        foreach (['send-code', 'deletion-code'] as $name) {
+            RateLimiter::for($name, function (Request $request) use ($name) {
+                $email = SendCodeRequest::normalizeEmail($request->input('email'));
 
-            return [
-                Limit::perMinute(1)->by('send-code:email-minute:'.$email),
-                Limit::perHour(10)->by('send-code:email-hour:'.$email),
-                Limit::perHour(60)->by('send-code:ip:'.$request->ip()),
-            ];
-        });
+                return [
+                    Limit::perMinute(1)->by("{$name}:email-minute:".$email),
+                    Limit::perHour(10)->by("{$name}:email-hour:".$email),
+                    Limit::perHour(60)->by("{$name}:ip:".$request->ip()),
+                ];
+            });
+        }
 
-        RateLimiter::for('verify-code', function (Request $request) {
-            $email = SendCodeRequest::normalizeEmail($request->input('email'));
+        foreach (['verify-code', 'delete-account'] as $name) {
+            RateLimiter::for($name, function (Request $request) use ($name) {
+                $email = SendCodeRequest::normalizeEmail($request->input('email'));
 
-            return [
-                Limit::perMinute(10)->by('verify-code:email:'.$email),
-                Limit::perMinute(30)->by('verify-code:ip:'.$request->ip()),
-            ];
-        });
+                return [
+                    Limit::perMinute(10)->by("{$name}:email:".$email),
+                    Limit::perMinute(30)->by("{$name}:ip:".$request->ip()),
+                ];
+            });
+        }
 
         RateLimiter::for('generations', fn (Request $request) => Limit::perHour((int) config('itp.generation.max_per_hour'))
             ->by('generations:user:'.$request->user()?->getAuthIdentifier()));

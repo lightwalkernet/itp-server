@@ -4,7 +4,9 @@ use App\Enums\CodeAudience;
 use App\Mail\OtpCodeMail;
 use App\Models\EmailVerificationCode;
 use Illuminate\Support\Facades\Mail;
+use Itp\Core\Models\UniversalItp;
 use Itp\Core\Models\User;
+use Itp\Core\Models\UserSetting;
 use Laravel\Sanctum\PersonalAccessToken;
 
 beforeEach(function () {
@@ -155,6 +157,53 @@ describe('verify-code', function () {
         expect($user->email_verified_at)->not->toBeNull()
             ->and(PersonalAccessToken::findToken($response->json('data.token'))->tokenable->is($user))->toBeTrue()
             ->and($user->tokens()->sole()->name)->toBe('Ann’s iPhone');
+    });
+
+    it('creates the settings row with its defaults on first sign-in and returns it', function () {
+        $code = EmailVerificationCode::issue(CodeAudience::App, 'ann@example.com');
+
+        $response = $this->postJson(route('api.auth.verify-code'), [
+            'email' => 'ann@example.com',
+            'code' => $code,
+            'device_name' => 'iPhone',
+        ])->assertOk();
+
+        $settings = UserSetting::sole();
+        expect($settings->user_id)->toBe(User::sole()->id)
+            ->and($response->json('data.settings'))->toBe([
+                'id' => $settings->id,
+                'user_id' => $settings->user_id,
+                'living_with_type' => null,
+                'living_with_id' => null,
+                'morning_at' => '07:00:00',
+                'why_at' => '14:30:00',
+                'evening_at' => '19:30:00',
+                'morning_reminder' => true,
+                'why_reminder' => true,
+                'evening_reminder' => true,
+                'created_at' => $settings->created_at->toJSON(),
+                'updated_at' => $settings->updated_at->toJSON(),
+            ])
+            ->and(array_keys($response->json('data')))->toBe(['user', 'settings', 'token', 'needs_profile']);
+    });
+
+    it('returns the existing settings row on a later sign-in', function () {
+        $universal = UniversalItp::factory()->create();
+        $settings = UserSetting::factory()->livingWith($universal)->create(['evening_at' => '21:00:00']);
+        $code = EmailVerificationCode::issue(CodeAudience::App, $settings->user->email);
+
+        $this->postJson(route('api.auth.verify-code'), [
+            'email' => $settings->user->email,
+            'code' => $code,
+            'device_name' => 'iPhone',
+        ])
+            ->assertOk()
+            ->assertJsonPath('data.settings.id', $settings->id)
+            ->assertJsonPath('data.settings.living_with_type', 'universal')
+            ->assertJsonPath('data.settings.living_with_id', $universal->id)
+            ->assertJsonPath('data.settings.evening_at', '21:00:00');
+
+        expect(UserSetting::count())->toBe(1);
     });
 
     it('returns needs_profile from the first name on every sign-in', function (?string $firstName, bool $needsProfile) {

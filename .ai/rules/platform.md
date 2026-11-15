@@ -110,16 +110,18 @@ The finished, playable ITP is shared. The machinery that produced it is not.
 
 **A playable ITP is one row.** The attunement and its companions (Breath 11, Quantum Whys) are columns on the same row, so a pull can never deliver half an ITP. `itps` (user) and `universal_itps` (global) share the same content columns, defined once in `Itp\Core\Schema\ItpContent`. The old parent table with activation, Breath 11 and base child tables is not carried over.
 
-`itp-core` registers four sync types, in pull order:
+`itp-core` registers six sync types, in pull order:
 
 | Type | Model | Scope | Notes |
 |---|---|---|---|
 | `users` | `User` | user, owner key `id` | Pull-only (section 5) |
 | `itps` | `Itp` | user | Pull-only for now: the phone never edits a finished ITP |
-| `universal_itps` | `UniversalItp` | global, daily | `kind`: universal or base (Introduction, heart coherence) |
+| `universal_itps` | `UniversalItp` | global, daily | `kind`: universal, base (Introduction, heart coherence, Meet Your ITP Self) or primer |
 | `wildcards` | `Wildcard` | global, daily | |
+| `user_settings` | `UserSetting` | user | Pushed and pulled. One row per user, created at first sign-in (`verify-code` returns it as `data.settings`): living with, prompt times, reminders |
+| `entries` | `Entry` | user | Pushed and pulled. Morning, step, evening and evidence entries, by app day (`for_date`). Never shown in Studio |
 
-Plays, settings, notification preferences, shares and backgrounds are added with their features (section 11, steps 5–7). Luminous is still undecided (section 12).
+Plays, notification preferences, shares and backgrounds are added with their features (section 11, steps 5–7). Luminous is still undecided (section 12).
 
 Generation-in-progress screens never read pipeline tables directly; they go through the API (section 6). This keeps the prompt-adjacent data off devices and gives both builds one code path.
 
@@ -146,11 +148,14 @@ Passwordless email OTP (six digits), unchanged in spirit from the current build.
 
 Decided Nov 2026: web-only, and a hard delete.
 
-- **Only on the web build.** The deletion page lives on `app.itstotallypossible.life`, behind a fresh OTP sign-in, which doubles as the identity check. The mobile app has a "Delete account" button and no deletion screen: the button opens that page directly in the browser, never a home or settings page. The `itp-site` delete-account page explains the process and links to the same page.
+- **Only on the web build.** The deletion page (`/delete-account`) lives on `app.itstotallypossible.life`, guest-accessible, behind a fresh emailed deletion code, which is the identity check. The mobile app has a "Delete account" button and no deletion screen: the button opens that page directly in the browser, never a home or settings page. The `itp-site` delete-account page explains the process and links to the same page.
 - **Store review is a known risk, accepted for simplicity.** Apple 5.1.1(v) wants deletion offered "within the app", and allows a link straight to the web page that completes it. Google Play wants an in-app way to start it, plus a web page that works on its own. If App Review objects, add a one-time link from the app that skips the second sign-in; don't build in-app deletion unless asked.
 - **`itp-server` does the delete, through the API.** It is a hard delete: `forceDelete()`, never `delete()`. `users` has `deleted_at` only because the sync package's `Syncable` trait brings soft deletes with it. A tombstone could never reach a deleted user, because pulling needs a valid token.
-  - Revoke the user's Sanctum tokens explicitly. `personal_access_tokens` points at users without a foreign key.
-  - Delete dependent rows first: user-scoped `itp-core` tables (`itps` has a `user_id` foreign key without cascade) and server-only tables (intakes, generations).
+  - No bearer token: a fresh code is the identity check. `POST /v1/account/deletion-code {email}` mails a code only if the email has an account, with the same answer either way. `POST /v1/account/delete {email, code}` spends it and deletes. Same limits, failure messages and attempt counting as `send-code` / `verify-code`, counted apart.
+  - Deletion codes have their own audience (`CodeAudience::AccountDeletion`): a sign-in code can never delete, and a deletion code can never sign in.
+  - `DeleteAccountAction`, in one transaction. Revoke the user's Sanctum tokens explicitly: `personal_access_tokens` points at users without a foreign key.
+  - Delete dependent rows first, synced ones through their models: user-scoped `itp-core` tables (`entries`, `user_settings`, `itps`; each has a `user_id` foreign key without cascade), server-only tables (intakes, generations and their followups, attunements, segments, flags, companions) and the email's app and deletion codes.
+  - `ai_usages` are kept for cost history, with `generation_id` nulled.
   - The phone's next API call gets a 401 and signs out, which wipes its local copy. A phone that is offline keeps its copy until it next connects.
 
 ## 6. Generation
@@ -201,7 +206,8 @@ Page transitions follow the `itpinterface` transition demo (`resources/js/transi
 - `@persist` keeps the bottom nav and the audio player alive across navigation. The tab bar's active state is updated by the script, because a persisted element doesn't re-render.
 - `@persist` cancels running CSS animations on every navigation (Livewire removes and re-inserts the element), so keep animated elements out of persisted regions.
 - **Ken Burns is not an app-wide background** (decided Nov 2026: it glitched across page transitions on both phones). If it's used at all, it lives on a single screen, so it never crosses a navigation. If it is ported, take the spike's `ken-burns.js`, which fixes Artemis's mid-crossfade bug, not Artemis's original.
-- `<html>` gets `scrollbar-gutter: stable`, so desktop scrollbars don't resize the fixed background between pages.
+- No scrollbar is drawn on `<html>` (`scrollbar-width: none`), as in an app: the page still scrolls, and desktop scrollbars can't resize the fixed background between pages. (Replaced `scrollbar-gutter: stable`, Nov 2026: the reserved strip looked broken.)
+- The first frame is already right: the page head sets `data-phase` and `data-still` with an inline script, and the layout puts the page's `data-room`/`data-bar`/`data-scene` on `<html>` (`App\Support\PageRoom`). Otherwise a fresh load paints the default night palette and fades from it.
 - Platform-only screens are gated by the flag, e.g. notification settings exist only on mobile.
 
 ## 9. Studio (admin)

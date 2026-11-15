@@ -11,7 +11,7 @@
     <meta name="format-detection" content="telephone=no, date=no, address=no, email=no" />
     <meta name="x-apple-disable-message-reformatting" />
     <link href="https://fonts.googleapis.com/css?family=Fira+Sans:ital,wght@0,400;0,500" rel="stylesheet" />
-    <title>Verification Code</title>
+    <title>{{ $title }}</title>
     <!--[if !mso]><!-- -->
     <style>
         @font-face { font-family: 'Fira Sans'; font-style: normal; font-weight: 400; src: local('Fira Sans Regular'), local('FiraSans-Regular'), url(https://fonts.gstatic.com/s/firasans/v10/va9E4kDNxMZdWfMOD5Vvl4jLazX3dA.woff2) format('woff2'); }
@@ -60,7 +60,7 @@
                                                     <tr>
                                                         <td align="center" valign="top" style="padding: 0px 0px 33px 0px;">
                                                             <div style="font-size:26px;line-height:44px;text-align:center;color:#515151;font-family:'Fira Sans', Arial, Helvetica, sans-serif;letter-spacing:-0.2px;">
-                                                                <span style="font-weight: 400;">Here is your verification code:</span>
+                                                                <span style="font-weight: 400;">{{ $heading }}</span>
                                                             </div>
                                                         </td>
                                                     </tr>
@@ -81,8 +81,13 @@
                                                             <div style="font-size:16px;line-height:140%;text-align:center;color:#1b1b1b;font-family:'Fira Sans', Arial, Helvetica, sans-serif;letter-spacing:-0.2px;">
                                                                 <span style="font-weight: 400;">This code expires in {{ $lifetimeMinutes }} minutes.</span>
                                                             </div>
+                                                            @if ($warning)
+                                                                <div style="font-size:16px;line-height:140%;text-align:center;color:#1b1b1b;font-family:'Fira Sans', Arial, Helvetica, sans-serif;letter-spacing:-0.2px;padding-top:16px;">
+                                                                    <span style="font-weight: 500;">{{ $warning }}</span>
+                                                                </div>
+                                                            @endif
                                                             <div style="font-size:16px;line-height:140%;text-align:center;color:#1b1b1b;font-family:'Fira Sans', Arial, Helvetica, sans-serif;letter-spacing:-0.2px;padding-top:16px;">
-                                                                <span style="font-weight: 400;">If you did not request this code, no further action is required.</span>
+                                                                <span style="font-weight: 400;">{{ $ignore }}</span>
                                                             </div>
                                                         </td>
                                                     </tr>

@@ -1,5 +1,6 @@
 <?php
 
+use App\Http\Controllers\Api\AccountController;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\ContentController;
 use App\Http\Controllers\Api\ItpGenerationController;
@@ -22,6 +23,11 @@ Route::domain(config('itp.api_domain'))
                 Route::post('complete-profile', 'completeProfile')->name('complete-profile');
                 Route::post('logout', 'logout')->name('logout');
             });
+        });
+
+        Route::prefix('account')->name('account.')->controller(AccountController::class)->group(function () {
+            Route::post('deletion-code', 'sendDeletionCode')->middleware('throttle:deletion-code')->name('deletion-code');
+            Route::post('delete', 'destroy')->middleware('throttle:delete-account')->name('delete');
         });
 
         Route::get('content/pull', [ContentController::class, 'pull'])->middleware('throttle:content')->name('content.pull');

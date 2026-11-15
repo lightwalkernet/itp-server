@@ -1,9 +1,13 @@
 Hello!
 
-Your verification code for it's totally possible is:
+{!! $intro !!}
 
 {{ $code }}
 
 This code expires in {{ $lifetimeMinutes }} minutes.
+@if ($warning)
 
-If you did not request this code, no further action is required.
+{!! $warning !!}
+@endif
+
+{!! $ignore !!}
